@@ -1,0 +1,118 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with first/middle/last name, role, classCode and approval status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "firstName": { "type": "string", "maxLength": 50 },
+        "middleName": { "type": "string", "maxLength": 50 },
+        "lastName": { "type": "string", "maxLength": 50 },
+        "displayName": { "type": "string", "maxLength": 150 },
+        "email": { "type": "string" },
+        "password": { "type": "string" },
+        "role": { "type": "string", "enum": ["student", "teacher", "admin"] },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "classCode": { "type": "string", "maxLength": 20 },
+        "studentNumber": { "type": "string", "maxLength": 50 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "email", "role", "status"]
+    },
+    "ClassSubject": {
+      "title": "ClassSubject",
+      "description": "Teacher created course/subject and section with auto-generated class code",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "subjectName": { "type": "string", "maxLength": 100 },
+        "section": { "type": "string", "maxLength": 50 },
+        "classCode": { "type": "string", "maxLength": 20 },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string", "maxLength": 100 },
+        "schedule": { "type": "string", "maxLength": 100 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "subjectName", "section", "classCode", "teacherId"]
+    },
+    "StudentScoreBoard": {
+      "title": "StudentScoreBoard",
+      "description": "Student Score Board with Written Works, Performance Tasks, and Examinations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string", "maxLength": 150 },
+        "studentEmail": { "type": "string" },
+        "classCode": { "type": "string", "maxLength": 20 },
+        "subjectName": { "type": "string", "maxLength": 100 },
+        "section": { "type": "string", "maxLength": 50 },
+        "teacherName": { "type": "string", "maxLength": 100 },
+        "writtenWorks": { "type": "array" },
+        "performanceTasks": { "type": "array" },
+        "summativeTests": { "type": "array" },
+        "termExam": { "type": "object" },
+        "quarterlyGrade": { "type": "number" },
+        "transmutedGrade": { "type": "number" },
+        "remarks": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "studentName", "classCode", "subjectName"]
+    },
+    "Broadcast": {
+      "title": "Broadcast",
+      "description": "Teacher announcement broadcast to class students",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "classCode": { "type": "string", "maxLength": 20 },
+        "subjectName": { "type": "string", "maxLength": 100 },
+        "title": { "type": "string", "maxLength": 150 },
+        "message": { "type": "string", "maxLength": 1000 },
+        "teacherName": { "type": "string", "maxLength": 100 },
+        "teacherId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title", "message", "teacherId"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Notifications for students and teachers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "recipientId": { "type": "string" },
+        "recipientRole": { "type": "string" },
+        "title": { "type": "string", "maxLength": 150 },
+        "message": { "type": "string", "maxLength": 500 },
+        "type": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title", "message"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "User" },
+      "description": "User profiles, credentials, approval statuses"
+    },
+    "/classes/{classId}": {
+      "schema": { "$ref": "ClassSubject" },
+      "description": "Classes and sections with generated class codes"
+    },
+    "/studentScores/{scoreBoardId}": {
+      "schema": { "$ref": "StudentScoreBoard" },
+      "description": "Student scoreboards with DepEd structure: Written Work, Performance Tasks, Summative & Term Exams"
+    },
+    "/broadcasts/{broadcastId}": {
+      "schema": { "$ref": "Broadcast" },
+      "description": "Teacher broadcast announcements"
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "Notification" },
+      "description": "Real-time notifications for students and teachers"
+    }
+  }
+}

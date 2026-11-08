@@ -1,0 +1,60 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'tanjosell.lpt@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    match /users/{userId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if true;
+    }
+
+    match /classes/{classId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /studentScores/{scoreBoardId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /broadcasts/{broadcastId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Retain legacy paths for backwards compatibility
+    match /scores/{scoreId} {
+      allow read, write: if true;
+    }
+    match /courses/{courseId} {
+      allow read, write: if true;
+    }
+    match /students/{studentId} {
+      allow read, write: if true;
+    }
+    match /announcements/{announcementId} {
+      allow read, write: if true;
+    }
+  }
+}

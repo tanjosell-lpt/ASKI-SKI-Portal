@@ -65,9 +65,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
   const [teacherPhoto, setTeacherPhoto] = useState<string>('');
 
   // Admin Sign In: No email needed. Only username and password!
-  // Username: "askiskiportal-admin", Password: "adminaskiski2026"
-  const [adminUsername, setAdminUsername] = useState('askiskiportal-admin');
-  const [adminPassword, setAdminPassword] = useState('adminaskiski2026');
+  const [adminUsername, setAdminUsername] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
 
   // Forgot Password / OTP Modal State
   const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
@@ -284,23 +283,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
     setErrorMsg(null);
     setTeacherSuccessMsg(null);
     setActiveTab('signin');
-    if (role === 'admin') {
-      setAdminUsername('askiskiportal-admin');
-      setAdminPassword('adminaskiski2026');
-    } else if (role === 'teacher') {
-      setSignInIdentifier('teacher.tanjosell@aski-ski.edu.ph');
-      setSignInPassword('teacher123');
-    } else {
-      setSignInIdentifier('102938475601');
-      setSignInPassword('student123');
-    }
+    // Ensure inputs are completely empty so users input their own credentials
+    setAdminUsername('');
+    setAdminPassword('');
+    setSignInIdentifier('');
+    setSignInPassword('');
   };
 
   // Forgot password handlers
   const handleOpenForgotModal = () => {
     setForgotStep('request');
-    const defaultInput = selectedRole === 'admin' ? 'tanjosell.lpt@gmail.com' : signInIdentifier;
-    setForgotEmail(defaultInput);
+    setForgotEmail(signInIdentifier || '');
     setForgotOtp('');
     setForgotNewPass('');
     setForgotConfirmPass('');
@@ -595,18 +588,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
                           className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0b3b60]"
                         />
                       </div>
-                    </div>
-
-                    {/* Quick LRN samples */}
-                    <div className="p-2 rounded-xl bg-blue-50/60 border border-blue-100 flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-[#0b3b60]">Sample Student:</span>
-                      <button
-                        type="button"
-                        onClick={() => setSignInIdentifier('102938475601')}
-                        className="px-2 py-0.5 rounded bg-white text-[10px] font-mono font-bold text-[#0b3b60] border border-blue-200 hover:bg-blue-100"
-                      >
-                        LRN: 102938475601 (Adriano)
-                      </button>
                     </div>
 
                     <button
@@ -979,15 +960,15 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
               </div>
             )}
 
-            {/* 3. ADMIN LOGIN (No email needed! Only username: "askiskiportal-admin" and password: "adminaskiski2026") */}
+            {/* 3. ADMIN LOGIN (User inputs username and password themselves) */}
             {selectedRole === 'admin' && (
-              <form onSubmit={handleSignIn} className="space-y-4">
-                <div className="p-3 rounded-2xl bg-amber-50/80 border border-amber-200/80 text-xs text-amber-900 flex items-start gap-2.5">
-                  <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <form onSubmit={handleSignIn} autoComplete="off" className="space-y-4">
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-700 flex items-start gap-2.5">
+                  <ShieldCheck className="w-4 h-4 text-[#0b3b60] shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-bold block">No email required for Administrator.</span>
-                    <span className="text-[11px] text-amber-800">
-                      Input username: <strong className="font-mono text-slate-900">askiskiportal-admin</strong> and password.
+                    <span className="font-bold block text-slate-900">Administrator Access Portal</span>
+                    <span className="text-[11px] text-slate-500">
+                      Please enter your administrator username and password to proceed.
                     </span>
                   </div>
                 </div>
@@ -1000,10 +981,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
                     <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
-                      placeholder="askiskiportal-admin"
+                      placeholder="Enter administrator username"
                       value={adminUsername}
                       onChange={(e) => setAdminUsername(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0b3b60]"
+                      autoComplete="off"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0b3b60]"
                       required
                     />
                   </div>
@@ -1026,10 +1008,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
                     <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="password"
-                      placeholder="adminaskiski2026"
+                      placeholder="••••••••"
                       value={adminPassword}
                       onChange={(e) => setAdminPassword(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#0b3b60]"
+                      autoComplete="new-password"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0b3b60]"
                       required
                     />
                   </div>

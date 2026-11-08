@@ -55,7 +55,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
   const [studentPhoto, setStudentPhoto] = useState<string>('');
   const [signUpEmail, setSignUpEmail] = useState('');
   const [signUpPassword, setSignUpPassword] = useState('');
-  const [classCode, setClassCode] = useState(classes[0]?.classCode || 'SKI-10A');
 
   // Teacher Sign Up inputs (every part mandatory: Name, Email, Password, and Photo)
   const [teacherName, setTeacherName] = useState('');
@@ -84,7 +83,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
   const [pendingSuccessData, setPendingSuccessData] = useState<{
     name: string;
     lrn?: string;
-    classCode: string;
+    classCode?: string;
     email: string;
     photo?: string;
   } | null>(null);
@@ -196,11 +195,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
       return;
     }
 
-    if (!classCode.trim()) {
-      setErrorMsg('Please enter a valid Class Code provided by your teacher.');
-      return;
-    }
-
     setLoading(true);
     const res = await signUp({
       firstName,
@@ -210,14 +204,13 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
       avatar: studentPhoto || undefined,
       email: signUpEmail,
       password: signUpPassword,
-      classCode,
     });
 
     if (res.success && res.user) {
       setPendingSuccessData({
         name: res.user.displayName,
         lrn: res.user.lrn,
-        classCode: res.user.classCode || classCode,
+        classCode: res.user.classCode,
         email: res.user.email,
         photo: res.user.avatar,
       });
@@ -451,7 +444,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
                 Welcome, {pendingSuccessData.name}!
               </h2>
               <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                Your registration for Class Code <strong className="text-[#0b3b60] font-mono">{pendingSuccessData.classCode}</strong> has been forwarded to the ASKI-SKI administration.
+                Your student account has been forwarded to ASKI-SKI administration for verification. Once approved, you can enroll in multiple subjects using the codes provided by your teachers.
               </p>
             </div>
 
@@ -731,21 +724,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
                       </div>
                     </div>
 
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                        Class Code (provided by your teacher) *
-                      </label>
-                      <div className="relative">
-                        <Hash className="w-4 h-4 text-[#0b3b60] absolute left-3 top-1/2 -translate-y-1/2" />
-                        <input
-                          type="text"
-                          placeholder="e.g. SKI-10A"
-                          value={classCode}
-                          onChange={(e) => setClassCode(e.target.value.toUpperCase())}
-                          className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-mono font-bold text-[#0b3b60] uppercase focus:outline-none focus:ring-2 focus:ring-[#0b3b60]"
-                          required
-                        />
+                    <div className="p-3 rounded-2xl bg-blue-50/80 border border-blue-200/80 text-[11px] text-[#0b3b60] space-y-1">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <BookOpen className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Google Classroom Style Subject Enrollment</span>
                       </div>
+                      <p className="text-slate-600 leading-relaxed">
+                        No class code needed to register! Once signed in, you can enroll in multiple subjects with different teachers using each subject's class code.
+                      </p>
                     </div>
 
                     <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800">

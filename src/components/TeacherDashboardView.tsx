@@ -84,24 +84,49 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     }
   };
 
-  const activeClass = classes.find((c) => c.classCode === selectedClassCode) || classes[0];
+  // Filter classes belonging strictly to THIS faculty teacher
+  const myTeacherClasses = useMemo(() => {
+    if (!currentUser) return [];
+    return classes.filter((cls) => {
+      const matchId = cls.teacherId && cls.teacherId === currentUser.id;
+      const matchName = cls.teacherName && currentUser.displayName && cls.teacherName.toLowerCase().trim() === currentUser.displayName.toLowerCase().trim();
+      const isDefaultTanjosell = (currentUser.email === 'teacher.tanjosell@aski-ski.edu.ph' || currentUser.displayName.toLowerCase().includes('tanjosell')) && (!cls.teacherId || cls.teacherId === 'teacher-1');
+      return matchId || matchName || isDefaultTanjosell;
+    });
+  }, [classes, currentUser]);
 
-  // Teacher class codes
-  const teacherClassCodes = useMemo(() => classes.map((c) => c.classCode.toUpperCase()), [classes]);
+  const teacherClassCodes = useMemo(() => myTeacherClasses.map((c) => c.classCode.toUpperCase()), [myTeacherClasses]);
 
-  // Pending students registered for this teacher's class(es)
+  const activeClass = myTeacherClasses.find((c) => c.classCode === selectedClassCode) || myTeacherClasses[0];
+
+  // Keep selectedClassCode in sync with myTeacherClasses
+  React.useEffect(() => {
+    if (myTeacherClasses.length > 0) {
+      if (!myTeacherClasses.some((c) => c.classCode === selectedClassCode)) {
+        setSelectedClassCode(myTeacherClasses[0].classCode);
+      }
+    } else {
+      setSelectedClassCode('');
+    }
+  }, [myTeacherClasses, selectedClassCode]);
+
+  // Pending students registered or enrolled in THIS teacher's class(es)
   const pendingStudentsForTeacher = useMemo(() => {
+    if (teacherClassCodes.length === 0) return [];
     return usersList.filter(
       (u) =>
         u.role === 'student' &&
         u.status === 'pending' &&
-        (teacherClassCodes.includes((u.classCode || '').toUpperCase()) ||
-          u.classCode?.toUpperCase() === selectedClassCode.toUpperCase())
+        (
+          teacherClassCodes.includes((u.classCode || '').toUpperCase()) ||
+          (u.enrolledClassCodes && u.enrolledClassCodes.some((code) => teacherClassCodes.includes(code.toUpperCase())))
+        )
     );
-  }, [usersList, teacherClassCodes, selectedClassCode]);
+  }, [usersList, teacherClassCodes]);
 
   // Filter scoreboards for the selected class code
   const classScoreboards = useMemo(() => {
+    if (!selectedClassCode) return [];
     return scoreboards.filter((sb) => {
       const matchCode = sb.classCode.toUpperCase() === selectedClassCode.toUpperCase();
       const q = searchQuery.toLowerCase().trim();
@@ -470,67 +495,90 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-          {classes.map((cls) => {
-            const isSelected = cls.classCode === selectedClassCode;
-            const enrolledCount = scoreboards.filter((sb) => sb.classCode === cls.classCode).length;
+        {myTeacherClasses.length === 0 ? (
+          <div className="apple-glass rounded-3xl p-8 sm:p-10 text-center space-y-4 border border-white/60 bg-white/90 shadow-sm">
+            <div className="w-14 h-14 rounded-2xl bg-blue-50 text-[#007AFF] flex items-center justify-center mx-auto border border-blue-200 shadow-inner">
+              <BookOpen className="w-7 h-7 text-[#007AFF]" />
+            </div>
+            <div>
+              <h3 className="font-bold text-base text-slate-900">
+                Welcome to your Faculty Portal, {currentUser?.displayName}!
+              </h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                You have not created any subjects or sections yet. Click below to add your first subject. A unique Class Code will be generated for your students to join your class.
+              </p>
+            </div>
+            <button
+              onClick={() => setIsAddClassOpen(true)}
+              className="apple-bubble-primary inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl text-white text-xs font-bold shadow-md shadow-blue-500/20"
+            >
+              <Plus className="w-4 h-4 text-amber-300" />
+              <span>Create Your First Subject</span>
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {myTeacherClasses.map((cls) => {
+              const isSelected = cls.classCode === selectedClassCode;
+              const enrolledCount = scoreboards.filter((sb) => sb.classCode === cls.classCode).length;
 
-            return (
-              <div
-                key={cls.id || cls.classCode}
-                onClick={() => setSelectedClassCode(cls.classCode)}
-                className={`apple-tap p-4 rounded-3xl cursor-pointer transition-all border ${
-                  isSelected
-                    ? 'apple-glass ring-2 ring-[#007AFF] shadow-sm bg-white'
-                    : 'bg-white/80 border-slate-200/60 hover:bg-white'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <span className="text-[10px] font-bold text-[#007AFF] bg-blue-50 border border-blue-200/60 px-2 py-0.5 rounded-full">
-                        {cls.term || 'Term 1'}
-                      </span>
+              return (
+                <div
+                  key={cls.id || cls.classCode}
+                  onClick={() => setSelectedClassCode(cls.classCode)}
+                  className={`apple-tap p-4 rounded-3xl cursor-pointer transition-all border ${
+                    isSelected
+                      ? 'apple-glass ring-2 ring-[#007AFF] shadow-sm bg-white'
+                      : 'bg-white/80 border-slate-200/60 hover:bg-white'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className="text-[10px] font-bold text-[#007AFF] bg-blue-50 border border-blue-200/60 px-2 py-0.5 rounded-full">
+                          {cls.term || 'Term 1'}
+                        </span>
+                      </div>
+                      <h3 className="font-semibold text-sm text-slate-900 line-clamp-1">
+                        {cls.subjectName}
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        {cls.section}
+                      </p>
                     </div>
-                    <h3 className="font-semibold text-sm text-slate-900 line-clamp-1">
-                      {cls.subjectName}
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      {cls.section}
-                    </p>
+
+                    {/* Class Code Pill with Copy button */}
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCopyCode(cls.classCode);
+                      }}
+                      className="apple-bubble flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-100 text-slate-800 font-mono text-xs font-semibold hover:bg-slate-200 transition"
+                      title="Click to copy Class Code"
+                    >
+                      <span>{cls.classCode}</span>
+                      {copiedCode === cls.classCode ? (
+                        <Check className="w-3 h-3 text-[#34C759]" />
+                      ) : (
+                        <Copy className="w-3 h-3 text-slate-400" />
+                      )}
+                    </div>
                   </div>
 
-                  {/* Class Code Pill with Copy button */}
-                  <div
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleCopyCode(cls.classCode);
-                    }}
-                    className="apple-bubble flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-100 text-slate-800 font-mono text-xs font-semibold hover:bg-slate-200 transition"
-                    title="Click to copy Class Code"
-                  >
-                    <span>{cls.classCode}</span>
-                    {copiedCode === cls.classCode ? (
-                      <Check className="w-3 h-3 text-[#34C759]" />
-                    ) : (
-                      <Copy className="w-3 h-3 text-slate-400" />
-                    )}
+                  <div className="flex items-center justify-between text-xs text-slate-400 mt-4 pt-3 border-t border-slate-100">
+                    <div className="flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-slate-400" />
+                      <span>{enrolledCount} Learners</span>
+                    </div>
+                    <span className="text-[11px] font-medium text-slate-500">
+                      {cls.schedule || cls.term || 'Term 1'}
+                    </span>
                   </div>
                 </div>
-
-                <div className="flex items-center justify-between text-xs text-slate-400 mt-4 pt-3 border-t border-slate-100">
-                  <div className="flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{enrolledCount} Learners</span>
-                  </div>
-                  <span className="text-[11px] font-medium text-slate-500">
-                    {cls.schedule || cls.term || 'Term 1'}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Class Scoreboard Management for Selected Class */}

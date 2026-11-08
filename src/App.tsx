@@ -89,15 +89,6 @@ function AppContent() {
     return <AuthScreen classes={classes} />;
   }
 
-  // Student scoreboard for current student
-  const studentScoreBoard = scoreboards.find(
-    (sb) =>
-      sb.studentId === currentUser.id ||
-      sb.studentEmail?.toLowerCase() === currentUser.email.toLowerCase() ||
-      (currentUser.studentNumber && sb.studentNumber === currentUser.studentNumber) ||
-      (currentUser.classCode && sb.classCode === currentUser.classCode && sb.studentName.toLowerCase().includes(currentUser.lastName.toLowerCase()))
-  ) || scoreboards[0];
-
   return (
     <div className="min-h-screen bg-[#f2f2f7] text-[#1c1c1e] flex flex-col font-sans transition-colors selection:bg-[#007AFF] selection:text-white">
       {/* Toast Notification (iOS Dynamic Pill Style) */}

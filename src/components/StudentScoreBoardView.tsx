@@ -2,7 +2,24 @@ import React, { useRef, useState, useMemo } from 'react';
 import { StudentScoreBoard, ClassSubject, calculateScoreBoardTotals } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { AskiLogo } from './AskiLogo';
-import { Printer, Clock, FileText, Camera, BookOpen } from 'lucide-react';
+import { 
+  Printer, 
+  Clock, 
+  FileText, 
+  Camera, 
+  BookOpen, 
+  Plus, 
+  Check, 
+  AlertCircle, 
+  X, 
+  Trash2, 
+  Copy, 
+  CheckCircle2,
+  GraduationCap,
+  Sparkles,
+  ArrowRight,
+  UserCheck
+} from 'lucide-react';
 
 interface StudentScoreBoardViewProps {
   scoreBoards: StudentScoreBoard[];
@@ -13,72 +30,162 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
   scoreBoards,
   classes 
 }) => {
-  const { currentUser, updateUserAvatar } = useAuth();
+  const { currentUser, updateUserAvatar, enrollInSubject, unenrollSubject } = useAuth();
   const printAreaRef = useRef<HTMLDivElement>(null);
   const studentPhotoRef = useRef<HTMLInputElement>(null);
 
-  // Filter student-specific scoreboards
+  // Join Subject Modal State
+  const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
+  const [inputClassCode, setInputClassCode] = useState('');
+  const [joinStatus, setJoinStatus] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
+  const [joinLoading, setJoinLoading] = useState(false);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+
+  // Filter student-specific scoreboards strictly for THIS student only
   const myScoreBoards = useMemo(() => {
     if (!currentUser) return [];
     return scoreBoards.filter((sb) => {
       const matchId = sb.studentId === currentUser.id;
-      const matchEmail = sb.studentEmail && sb.studentEmail.toLowerCase() === currentUser.email?.toLowerCase();
-      const matchStuNum = currentUser.studentNumber && sb.studentNumber === currentUser.studentNumber;
-      const matchLastName = currentUser.classCode && sb.classCode === currentUser.classCode &&
-        sb.studentName.toLowerCase().includes((currentUser.lastName || '').toLowerCase());
-      return matchId || matchEmail || matchStuNum || matchLastName;
+      const matchEmail = sb.studentEmail && sb.studentEmail.toLowerCase().trim() === currentUser.email?.toLowerCase().trim();
+      const matchLrn = currentUser.lrn && sb.lrn && sb.lrn.trim() === currentUser.lrn.trim();
+      const matchStuNum = currentUser.studentNumber && sb.studentNumber && sb.studentNumber === currentUser.studentNumber;
+      return matchId || matchEmail || matchLrn || matchStuNum;
     });
   }, [scoreBoards, currentUser]);
 
-  // Combine available subjects from registered classes and any existing scoreboards
-  const availableSubjects = useMemo(() => {
-    const list: { subjectName: string; classCode: string; section?: string }[] = [];
+  // Combined enrolled subjects list (like Google Classroom classes enrolled)
+  const enrolledSubjects = useMemo(() => {
+    const list: {
+      classCode: string;
+      subjectName: string;
+      section: string;
+      teacherName: string;
+      term?: string;
+      schedule?: string;
+      room?: string;
+    }[] = [];
     const seen = new Set<string>();
 
-    // Add from classes first
-    classes.forEach((c) => {
-      const key = `${c.subjectName}__${c.classCode}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        list.push({ subjectName: c.subjectName, classCode: c.classCode, section: c.section });
+    // 1. From currentUser.enrolledClassCodes
+    (currentUser?.enrolledClassCodes || []).forEach((code) => {
+      const norm = code.trim().toUpperCase();
+      if (!seen.has(norm)) {
+        seen.add(norm);
+        const cls = classes.find((c) => c.classCode.toUpperCase() === norm);
+        list.push({
+          classCode: norm,
+          subjectName: cls?.subjectName || 'Enrolled Subject',
+          section: cls?.section || 'Regular Section',
+          teacherName: cls?.teacherName || 'Assigned Faculty',
+          term: cls?.term || 'Term 1',
+          schedule: cls?.schedule,
+          room: cls?.room,
+        });
       }
     });
 
-    // Add any others from scoreboards
+    // 2. From student's own scoreboards in Firestore
     myScoreBoards.forEach((sb) => {
-      const key = `${sb.subjectName}__${sb.classCode}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        list.push({ subjectName: sb.subjectName, classCode: sb.classCode, section: sb.section });
+      const norm = sb.classCode.trim().toUpperCase();
+      if (!seen.has(norm)) {
+        seen.add(norm);
+        const cls = classes.find((c) => c.classCode.toUpperCase() === norm);
+        list.push({
+          classCode: norm,
+          subjectName: cls?.subjectName || sb.subjectName || 'Enrolled Subject',
+          section: cls?.section || sb.section || 'Regular Section',
+          teacherName: cls?.teacherName || sb.teacherName || 'Assigned Faculty',
+          term: cls?.term || 'Term 1',
+          schedule: cls?.schedule,
+          room: cls?.room,
+        });
       }
     });
+
+    // 3. From legacy currentUser.classCode if present
+    if (currentUser?.classCode) {
+      const norm = currentUser.classCode.trim().toUpperCase();
+      if (!seen.has(norm)) {
+        seen.add(norm);
+        const cls = classes.find((c) => c.classCode.toUpperCase() === norm);
+        list.push({
+          classCode: norm,
+          subjectName: cls?.subjectName || 'Enrolled Subject',
+          section: cls?.section || 'Regular Section',
+          teacherName: cls?.teacherName || 'Assigned Faculty',
+          term: cls?.term || 'Term 1',
+          schedule: cls?.schedule,
+          room: cls?.room,
+        });
+      }
+    }
 
     return list;
-  }, [classes, myScoreBoards]);
+  }, [classes, myScoreBoards, currentUser]);
 
-  // Selected subject state
-  const [selectedSubjectKey, setSelectedSubjectKey] = useState<string>(
-    availableSubjects[0] ? `${availableSubjects[0].subjectName}__${availableSubjects[0].classCode}` : 'Mathematics 10__SKI-10A'
+  // Selected class code state
+  const [selectedClassCode, setSelectedClassCode] = useState<string>(
+    enrolledSubjects[0]?.classCode || ''
   );
 
-  const activeSubjectInfo = availableSubjects.find(
-    (s) => `${s.subjectName}__${s.classCode}` === selectedSubjectKey
-  ) || availableSubjects[0] || { subjectName: 'Mathematics 10', classCode: 'SKI-10A', section: 'Grade 10' };
+  // Sync selectedClassCode when enrolledSubjects updates
+  React.useEffect(() => {
+    if (enrolledSubjects.length > 0) {
+      if (!enrolledSubjects.some((s) => s.classCode === selectedClassCode)) {
+        setSelectedClassCode(enrolledSubjects[0].classCode);
+      }
+    } else {
+      setSelectedClassCode('');
+    }
+  }, [enrolledSubjects, selectedClassCode]);
 
-  // Current active scoreboard for selected subject
-  const currentScoreBoard = useMemo(() => {
-    // 1. Try finding one matching exact subject & classCode
+  const activeSubjectInfo = enrolledSubjects.find((s) => s.classCode === selectedClassCode) || enrolledSubjects[0] || null;
+
+  // Current active scoreboard: Strictly for current student and active subject
+  const currentScoreBoard = useMemo<StudentScoreBoard | null>(() => {
+    if (!activeSubjectInfo || !currentUser) return null;
+
     const found = myScoreBoards.find(
-      (sb) => sb.subjectName.toLowerCase() === activeSubjectInfo.subjectName.toLowerCase()
+      (sb) => sb.classCode.toUpperCase() === activeSubjectInfo.classCode.toUpperCase()
     );
     if (found) return found;
 
-    // 2. If student has only 1 scoreboard and it's the default, use it as template
-    if (myScoreBoards.length > 0) {
-      return myScoreBoards[0];
-    }
-    return scoreBoards[0] || null;
-  }, [myScoreBoards, activeSubjectInfo, scoreBoards]);
+    // Fallback template for the enrolled subject
+    return {
+      id: `sb-${currentUser.id}-${activeSubjectInfo.classCode.toLowerCase()}`,
+      studentId: currentUser.id,
+      studentNumber: currentUser.studentNumber || '2024-XXXX',
+      lrn: currentUser.lrn || 'Pending DepEd LRN',
+      studentName: currentUser.displayName,
+      studentEmail: currentUser.email,
+      classCode: activeSubjectInfo.classCode,
+      subjectName: activeSubjectInfo.subjectName,
+      section: activeSubjectInfo.section,
+      teacherName: activeSubjectInfo.teacherName,
+      writtenWorks: [
+        { id: 'ww-1', title: 'Written Work 1', score: 0, maxScore: 25 },
+        { id: 'ww-2', title: 'Written Work 2', score: 0, maxScore: 25 },
+        { id: 'ww-3', title: 'Written Work 3', score: 0, maxScore: 20 },
+      ],
+      performanceTasks: [
+        { id: 'pt-1', title: 'Product/Performance Task 1', score: 0, maxScore: 30 },
+        { id: 'pt-2', title: 'Product/Performance Task 2', score: 0, maxScore: 30 },
+        { id: 'pt-3', title: 'Product/Performance Task 3', score: 0, maxScore: 30 },
+      ],
+      summativeTests: [
+        { id: 'st-1', title: 'Summative Test 1', score: 0, maxScore: 30 },
+        { id: 'st-2', title: 'Summative Test 2', score: 0, maxScore: 30 },
+      ],
+      termExam: {
+        id: 'term-1',
+        title: 'Quarterly Term Exam',
+        score: 0,
+        maxScore: 60,
+      },
+      remarks: 'Enrolled subject. Awaiting faculty score entry.',
+      updatedAt: new Date().toISOString(),
+    };
+  }, [myScoreBoards, activeSubjectInfo, currentUser]);
 
   const handleStudentPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -91,7 +198,50 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
     }
   };
 
-  // If student registration is still pending approval
+  const handleJoinSubjectSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setJoinStatus(null);
+    const cleanCode = inputClassCode.trim().toUpperCase();
+    if (!cleanCode) {
+      setJoinStatus({ type: 'error', message: 'Please enter a Subject Code.' });
+      return;
+    }
+
+    setJoinLoading(true);
+    const res = await enrollInSubject(cleanCode, classes);
+    if (res.success) {
+      setJoinStatus({ type: 'success', message: res.message });
+      setSelectedClassCode(cleanCode);
+      setTimeout(() => {
+        setIsJoinModalOpen(false);
+        setInputClassCode('');
+        setJoinStatus(null);
+      }, 1200);
+    } else {
+      setJoinStatus({ type: 'error', message: res.message });
+    }
+    setJoinLoading(false);
+  };
+
+  const handleUnenroll = async (classCode: string, subjectName: string) => {
+    if (window.confirm(`Are you sure you want to unenroll from ${subjectName} (${classCode})?`)) {
+      const res = await unenrollSubject(classCode);
+      if (res.success) {
+        if (selectedClassCode === classCode) {
+          const remaining = enrolledSubjects.filter((s) => s.classCode !== classCode);
+          setSelectedClassCode(remaining[0]?.classCode || '');
+        }
+      }
+    }
+  };
+
+  const handleCopyClassCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedCode(code);
+    setTimeout(() => setCopiedCode(null), 2000);
+  };
+
+  // If student registration is pending approval
   if (currentUser?.status === 'pending') {
     return (
       <div className="max-w-2xl mx-auto py-12 px-4">
@@ -108,7 +258,7 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
               Kumusta, {currentUser.displayName}!
             </h1>
             <p className="text-sm text-slate-600 mt-2 max-w-md mx-auto leading-relaxed">
-              Your registration for Class Code <strong className="text-[#0b3b60] font-mono">{currentUser.classCode || 'SKI-10A'}</strong> has been received by ASKI-SKI and is awaiting Administrator verification.
+              Your student registration has been received by ASKI-SKI and is awaiting Administrator approval.
             </p>
           </div>
 
@@ -118,12 +268,11 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
               <div>• <strong className="text-slate-800">LRN:</strong> <span className="font-mono font-bold text-[#0b3b60]">{currentUser.lrn}</span></div>
             )}
             <div>• <strong className="text-slate-800">Email:</strong> {currentUser.email}</div>
-            <div>• <strong className="text-slate-800">Class Code:</strong> {currentUser.classCode || 'SKI-10A'}</div>
             <div>• <strong className="text-slate-800">Status:</strong> <span className="text-amber-600 font-bold">Pending Administrator Approval</span></div>
           </div>
 
           <p className="text-[11px] text-slate-400">
-            Once an administrator accepts your request, your live score board will be immediately accessible here.
+            Once an administrator accepts your account, you will be able to enroll in all your subjects using each teacher's class code.
           </p>
         </div>
       </div>
@@ -140,8 +289,8 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      {/* Top Action Bar (hidden when printing) - Photo, Student Name, Subject Tabs, and Print button */}
-      <div className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200 shadow-xs print:hidden space-y-4">
+      {/* Top Action Bar (hidden when printing) - Photo, Student Name, Subject Tabs, and Actions */}
+      <div className="bg-white/90 backdrop-blur-2xl p-4 sm:p-5 rounded-3xl border border-black/[0.06] shadow-sm print:hidden space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
             {/* Student Circle Photo with Upload ability */}
@@ -169,7 +318,7 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
               <button
                 type="button"
                 onClick={() => studentPhotoRef.current?.click()}
-                className="absolute bottom-0 right-0 p-1 rounded-full bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-xs border border-white transition hover:scale-110"
+                className="apple-tap absolute bottom-0 right-0 p-1.5 rounded-full bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-xs border border-white transition hover:scale-110"
                 title="Upload / Change Photo"
               >
                 <Camera className="w-3 h-3" />
@@ -186,64 +335,146 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Class Code: <span className="font-mono font-bold text-[#0b3b60]">{currentUser?.classCode || activeSubjectInfo.classCode}</span>
+                Enrolled in <strong className="text-slate-800">{enrolledSubjects.length}</strong> {enrolledSubjects.length === 1 ? 'subject' : 'subjects'}
               </p>
             </div>
           </div>
 
-          <button
-            onClick={handlePrint}
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-[#0b3b60] hover:bg-[#092c4c] text-white text-xs font-bold shadow-md shadow-blue-950/20 transition hover:scale-[1.02] active:scale-[0.98]"
-          >
-            <Printer className="w-4 h-4 text-amber-400" />
-            <span>Print Score Board</span>
-          </button>
-        </div>
+          <div className="flex items-center gap-2">
+            {/* Join Subject Button (Google Classroom Style) */}
+            <button
+              onClick={() => {
+                setJoinStatus(null);
+                setInputClassCode('');
+                setIsJoinModalOpen(true);
+              }}
+              className="apple-tap inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-2xl bg-amber-400 hover:bg-amber-500 text-slate-950 text-xs font-bold shadow-md shadow-amber-500/20 transition hover:scale-[1.02] active:scale-[0.98]"
+            >
+              <Plus className="w-4 h-4 text-slate-950" />
+              <span>Join Subject</span>
+            </button>
 
-        {/* iOS-style Subject Selection Segmented Control */}
-        <div className="pt-3 border-t border-slate-100">
-          <div className="bg-slate-200/70 p-1 rounded-2xl flex items-center gap-1 backdrop-blur-xl border border-black/[0.04] overflow-x-auto">
-            {availableSubjects.map((subj) => {
-              const key = `${subj.subjectName}__${subj.classCode}`;
-              const isSelected = key === selectedSubjectKey;
-
-              return (
-                <button
-                  key={key}
-                  onClick={() => setSelectedSubjectKey(key)}
-                  className={`apple-tap px-4 py-2 rounded-xl text-xs font-semibold transition shrink-0 flex items-center gap-2 ${
-                    isSelected
-                      ? 'bg-white text-slate-900 shadow-[0_2px_8px_rgba(0,0,0,0.08)]'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <span>{subj.subjectName}</span>
-                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
-                    isSelected ? 'bg-slate-100 text-[#007AFF]' : 'bg-slate-200/80 text-slate-500'
-                  }`}>
-                    {subj.classCode}
-                  </span>
-                </button>
-              );
-            })}
+            {/* Print Button */}
+            {activeSubjectInfo && (
+              <button
+                onClick={handlePrint}
+                className="apple-tap inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-[#0b3b60] hover:bg-[#092c4c] text-white text-xs font-bold shadow-md shadow-blue-950/20 transition hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <Printer className="w-4 h-4 text-amber-300" />
+                <span className="hidden sm:inline">Print Score Board</span>
+              </button>
+            )}
           </div>
         </div>
+
+        {/* Google Classroom Subject Selector Bar */}
+        {enrolledSubjects.length > 0 ? (
+          <div className="pt-3 border-t border-slate-100 space-y-2">
+            <div className="flex items-center justify-between text-xs text-slate-500 px-1">
+              <span className="font-semibold text-slate-700">Enrolled Subjects ({enrolledSubjects.length})</span>
+              <button
+                onClick={() => setIsJoinModalOpen(true)}
+                className="text-[11px] font-bold text-[#007AFF] hover:underline flex items-center gap-1"
+              >
+                <Plus className="w-3 h-3" />
+                <span>Enroll in another subject</span>
+              </button>
+            </div>
+
+            <div className="bg-slate-200/60 p-1.5 rounded-2xl flex items-center gap-1.5 backdrop-blur-xl border border-black/[0.04] overflow-x-auto">
+              {enrolledSubjects.map((subj) => {
+                const isSelected = subj.classCode === selectedClassCode;
+
+                return (
+                  <button
+                    key={subj.classCode}
+                    onClick={() => setSelectedClassCode(subj.classCode)}
+                    className={`apple-tap px-3.5 py-2 rounded-xl text-xs font-semibold transition shrink-0 flex items-center gap-2 ${
+                      isSelected
+                        ? 'bg-white text-slate-900 shadow-[0_2px_8px_rgba(0,0,0,0.08)]'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <span>{subj.subjectName}</span>
+                    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                      isSelected ? 'bg-blue-50 text-[#0b3b60] font-bold' : 'bg-slate-200/80 text-slate-500'
+                    }`}>
+                      {subj.classCode}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
       </div>
 
-      {/* Official Score Board Document (Written Works 20%, Performance Tasks 50%, Examinations 30%) */}
-      {!currentScoreBoard ? (
-        <div className="bg-white rounded-3xl p-10 border border-slate-200 text-center space-y-3">
-          <div className="w-12 h-12 rounded-full bg-blue-50 text-[#0b3b60] flex items-center justify-center mx-auto">
-            <FileText className="w-6 h-6" />
+      {/* Case 1: Student has 0 enrolled subjects (Empty State Card) */}
+      {enrolledSubjects.length === 0 ? (
+        <div className="bg-white/90 backdrop-blur-2xl rounded-3xl p-8 sm:p-12 border border-black/[0.06] text-center shadow-lg shadow-black/[0.02] space-y-5 animate-in fade-in">
+          <div className="w-16 h-16 rounded-full bg-blue-50 text-[#0b3b60] flex items-center justify-center mx-auto border-2 border-blue-200">
+            <GraduationCap className="w-8 h-8 text-[#0b3b60]" />
           </div>
-          <h2 className="text-lg font-bold text-[#0b3b60]">
-            Scores Not Yet Posted for {activeSubjectInfo.subjectName}
-          </h2>
-          <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Your teacher has not uploaded the score record for {activeSubjectInfo.subjectName} ({activeSubjectInfo.classCode}) yet. Please check back shortly.
-          </p>
+
+          <div className="space-y-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+              Welcome to ASKI SKI Portal
+            </span>
+            <h2 className="text-xl sm:text-2xl font-black text-[#0b3b60]">
+              You Haven't Enrolled in Any Subjects Yet
+            </h2>
+            <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+              Just like Google Classroom, you can enroll in multiple subjects with different teachers using their unique Class Codes.
+            </p>
+          </div>
+
+          <div className="pt-2">
+            <button
+              onClick={() => {
+                setJoinStatus(null);
+                setInputClassCode('');
+                setIsJoinModalOpen(true);
+              }}
+              className="apple-tap inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-[#0b3b60] hover:bg-[#092c4c] text-white font-bold text-xs shadow-lg shadow-blue-950/20 transition hover:scale-105 active:scale-95"
+            >
+              <Plus className="w-4 h-4 text-amber-300" />
+              <span>Enroll in Your First Subject</span>
+            </button>
+          </div>
+
+          {/* Available Subjects Preview */}
+          {classes.length > 0 && (
+            <div className="pt-6 border-t border-slate-100 text-left max-w-lg mx-auto">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-2 text-center">
+                Available Subjects in ASKI SKI (Click to Enroll)
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {classes.slice(0, 4).map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => {
+                      setInputClassCode(c.classCode);
+                      setIsJoinModalOpen(true);
+                    }}
+                    className="apple-tap p-3 rounded-2xl bg-slate-50 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 text-left transition group"
+                  >
+                    <div className="font-bold text-xs text-[#0b3b60] group-hover:text-blue-700">
+                      {c.subjectName}
+                    </div>
+                    <div className="text-[10px] text-slate-500 flex items-center justify-between mt-0.5">
+                      <span>{c.teacherName}</span>
+                      <span className="font-mono font-bold text-[#0b3b60] bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                        {c.classCode}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       ) : (
+        /* Case 2: Official Score Board Document for the active subject */
         <div 
           ref={printAreaRef}
           className="bg-white text-slate-900 rounded-3xl p-6 sm:p-10 border border-slate-200 shadow-md space-y-6 font-sans print:p-0 print:border-none print:shadow-none"
@@ -260,7 +491,7 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
                   Transformation • Discipline • Excellence
                 </p>
                 <p className="text-[11px] text-slate-500 font-serif">
-                  Talavera, Nueva Ecija • Quarterly Score Sheet
+                  Talavera, Nueva Ecija • Academic Score Sheet
                 </p>
               </div>
             </div>
@@ -269,67 +500,82 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
               <div className="text-slate-400 uppercase text-[10px] font-bold tracking-wider">Academic Assessment</div>
               <div className="font-bold text-[#0b3b60] text-sm">Official Score Board</div>
               <div className="text-[11px] text-slate-500 mt-0.5">
-                Subject: <strong className="text-slate-800">{activeSubjectInfo.subjectName}</strong>
+                Subject: <strong className="text-slate-800">{activeSubjectInfo?.subjectName}</strong>
               </div>
             </div>
           </div>
 
           {/* Learner & Class Metadata Strip including Circle Photo & LRN */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 p-4 rounded-2xl bg-blue-50/50 border border-blue-100 text-xs items-center">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full overflow-hidden border border-amber-400 bg-white shrink-0 shadow-xs">
-                {currentUser?.avatar ? (
-                  <img src={currentUser.avatar} alt={studentDisplayName} className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full bg-[#0b3b60] text-amber-300 flex items-center justify-center font-bold text-xs">
-                    {studentDisplayName.charAt(0)}
-                  </div>
-                )}
+          {activeSubjectInfo && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 p-4 rounded-2xl bg-blue-50/50 border border-blue-100 text-xs items-center">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full overflow-hidden border border-amber-400 bg-white shrink-0 shadow-xs">
+                  {currentUser?.avatar ? (
+                    <img src={currentUser.avatar} alt={studentDisplayName} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full bg-[#0b3b60] text-amber-300 flex items-center justify-center font-bold text-xs">
+                      {studentDisplayName.charAt(0)}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Learner's Name</span>
+                  <span className="text-sm font-black text-[#0b3b60] block uppercase tracking-wide">
+                    {studentDisplayName}
+                  </span>
+                  <span className="text-[10px] font-mono font-semibold text-slate-500 block">
+                    LRN: {studentLrn}
+                  </span>
+                </div>
               </div>
+
               <div>
-                <span className="text-[10px] font-bold uppercase text-slate-400 block">Learner's Name</span>
-                <span className="text-sm font-black text-[#0b3b60] block uppercase tracking-wide">
-                  {studentDisplayName}
+                <span className="text-[10px] font-bold uppercase text-slate-400 block">Subject / Course</span>
+                <span className="text-xs font-bold text-slate-800 block mt-0.5">
+                  {activeSubjectInfo.subjectName}
                 </span>
-                <span className="text-[10px] font-mono font-semibold text-slate-500 block">
-                  LRN: {studentLrn}
+                <span className="text-[10px] text-slate-500 block">
+                  {activeSubjectInfo.term || 'Term 1'} Record
                 </span>
               </div>
-            </div>
 
-            <div>
-              <span className="text-[10px] font-bold uppercase text-slate-400 block">Subject / Course</span>
-              <span className="text-xs font-bold text-slate-800 block mt-0.5">
-                {activeSubjectInfo.subjectName}
-              </span>
-              <span className="text-[10px] text-slate-500 block">
-                Quarter 1 Record
-              </span>
-            </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase text-slate-400 block">Section & Code</span>
+                <span className="text-xs font-semibold text-slate-800 block mt-0.5">
+                  {activeSubjectInfo.section} • <span className="font-mono font-bold text-[#0b3b60]">{activeSubjectInfo.classCode}</span>
+                </span>
+                <span className="text-[10px] text-slate-500 block">
+                  Regular Academic Track
+                </span>
+              </div>
 
-            <div>
-              <span className="text-[10px] font-bold uppercase text-slate-400 block">Section & Code</span>
-              <span className="text-xs font-semibold text-slate-800 block mt-0.5">
-                {activeSubjectInfo.section || currentScoreBoard.section || 'Grade 10'} • <span className="font-mono font-bold text-[#0b3b60]">{activeSubjectInfo.classCode}</span>
-              </span>
-              <span className="text-[10px] text-slate-500 block">
-                Regular Academic Track
-              </span>
-            </div>
+              <div className="flex items-center justify-between sm:block">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Subject Teacher</span>
+                  <span className="text-xs font-semibold text-slate-800 block mt-0.5">
+                    {activeSubjectInfo.teacherName}
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">
+                    Faculty Instructor
+                  </span>
+                </div>
 
-            <div>
-              <span className="text-[10px] font-bold uppercase text-slate-400 block">Subject Teacher</span>
-              <span className="text-xs font-semibold text-slate-800 block mt-0.5">
-                {currentScoreBoard.teacherName || 'Prof. Tanjosell'}
-              </span>
-              <span className="text-[10px] text-slate-500 block">
-                Faculty Instructor
-              </span>
+                <div className="print:hidden mt-2 sm:mt-1">
+                  <button
+                    onClick={() => handleUnenroll(activeSubjectInfo.classCode, activeSubjectInfo.subjectName)}
+                    className="apple-tap text-[10px] text-slate-400 hover:text-rose-600 transition flex items-center gap-1"
+                    title="Unenroll from this subject"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Drop Subject</span>
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Detailed Score Tables (WW 20%, PT 50%, Exams 30%) */}
-          {totals && (
+          {currentScoreBoard && totals && (
             <div className="space-y-6">
               {/* Component 1: Written/Oral Works (20%) - 2 to 5 items */}
               <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
@@ -471,6 +717,130 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Google Classroom Style: "Join Subject / Class" Modal */}
+      {isJoinModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-black/[0.06] space-y-5 animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                  <BookOpen className="w-5 h-5 text-amber-700" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">
+                    Join Subject
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    ASKI Skills & Knowledge Institute
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setIsJoinModalOpen(false);
+                  setJoinStatus(null);
+                }}
+                className="apple-tap p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Error / Success Banner */}
+            {joinStatus && (
+              <div className={`p-3 rounded-2xl text-xs flex items-start gap-2 ${
+                joinStatus.type === 'error'
+                  ? 'bg-rose-50 border border-rose-200 text-rose-700'
+                  : 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+              }`}>
+                {joinStatus.type === 'error' ? (
+                  <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                )}
+                <span>{joinStatus.message}</span>
+              </div>
+            )}
+
+            {/* Join Form */}
+            <form onSubmit={handleJoinSubjectSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Class / Subject Code
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="e.g. SKI-10A, SKI-ENG1, SKI-SC9"
+                    value={inputClassCode}
+                    onChange={(e) => setInputClassCode(e.target.value.toUpperCase())}
+                    className="w-full px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-sm font-mono font-bold text-[#0b3b60] placeholder-slate-400 uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-[#0b3b60]"
+                    required
+                    autoFocus
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
+                  Ask your teacher for the class code, then enter it here to access their subject gradebook.
+                </p>
+              </div>
+
+              {/* Quick Suggestions / Available Classes */}
+              {classes.length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Quick Pick Active Subjects:
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
+                    {classes.map((cls) => {
+                      const alreadyEnrolled = enrolledSubjects.some((s) => s.classCode === cls.classCode);
+                      return (
+                        <button
+                          key={cls.id}
+                          type="button"
+                          onClick={() => setInputClassCode(cls.classCode)}
+                          className={`apple-tap px-2.5 py-1 rounded-xl text-xs flex items-center gap-1.5 transition border ${
+                            inputClassCode === cls.classCode
+                              ? 'bg-[#0b3b60] text-white border-[#0b3b60]'
+                              : alreadyEnrolled
+                              ? 'bg-slate-100 text-slate-400 border-slate-200 opacity-60'
+                              : 'bg-white hover:bg-amber-50 text-slate-800 border-slate-200 hover:border-amber-300'
+                          }`}
+                        >
+                          <span className="font-semibold">{cls.subjectName}</span>
+                          <span className="font-mono text-[10px] opacity-75">({cls.classCode})</span>
+                          {alreadyEnrolled && <span className="text-[9px] text-emerald-600 font-bold">Enrolled</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsJoinModalOpen(false)}
+                  className="apple-tap px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={joinLoading || !inputClassCode.trim()}
+                  className="apple-tap px-5 py-2.5 rounded-xl bg-[#0b3b60] hover:bg-[#092c4c] disabled:opacity-50 text-white text-xs font-bold shadow-md shadow-blue-950/20 transition flex items-center gap-1.5"
+                >
+                  {joinLoading ? 'Joining...' : 'Join Subject'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

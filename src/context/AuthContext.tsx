@@ -1,13 +1,14 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { auth, googleProvider } from '../firebase';
-import { UserAccount, UserRole, ApprovalStatus } from '../types';
+import { UserAccount, UserRole, ApprovalStatus, StudentScoreBoard, ClassSubject } from '../types';
 import { 
   saveUserAccount, 
   subscribeToUsers, 
   addNotification, 
   deleteUserAccount, 
-  ensureAdminAccount 
+  ensureAdminAccount,
+  saveScoreBoard
 } from '../services/dbService';
 
 interface AuthContextType {
@@ -25,7 +26,7 @@ interface AuthContextType {
     avatar?: string;
     email: string;
     password?: string;
-    classCode: string;
+    classCode?: string;
   }) => Promise<{ success: boolean; message?: string; user?: UserAccount }>;
   signUpTeacher: (params: {
     name: string;
@@ -35,6 +36,8 @@ interface AuthContextType {
   }) => Promise<{ success: boolean; message?: string; user?: UserAccount }>;
   requestPasswordReset: (identifier: string) => Promise<{ success: boolean; message: string; otpCode?: string }>;
   verifyOtpAndResetPassword: (identifier: string, otpCode: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
+  enrollInSubject: (classCode: string, availableClasses: ClassSubject[]) => Promise<{ success: boolean; message: string; subject?: ClassSubject }>;
+  unenrollSubject: (classCode: string) => Promise<{ success: boolean; message: string }>;
   updateUserAvatar: (userId: string, avatarData: string) => Promise<void>;
   updateUserAccount: (user: UserAccount) => Promise<void>;
   deleteUser: (userId: string) => Promise<void>;
@@ -348,11 +351,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     avatar?: string;
     email: string;
     password?: string;
-    classCode: string;
+    classCode?: string;
   }): Promise<{ success: boolean; message?: string; user?: UserAccount }> => {
     const email = params.email.toLowerCase().trim();
     const isAdminEmail = email === ADMIN_EMAIL;
     const displayName = `${params.firstName.trim()} ${params.middleName ? params.middleName.trim() + ' ' : ''}${params.lastName.trim()}`;
+
+    const rawCode = (params.classCode || '').trim().toUpperCase();
+    const enrolled = rawCode ? [rawCode] : [];
 
     const newUser: UserAccount = {
       id: isAdminEmail ? 'user-admin-1' : `user-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -365,7 +371,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       password: params.password || 'password123',
       role: isAdminEmail ? 'admin' : 'student',
       status: isAdminEmail ? 'approved' : 'pending', // Admins are instantly approved
-      classCode: params.classCode.trim().toUpperCase(),
+      classCode: rawCode || undefined,
+      enrolledClassCodes: enrolled,
       studentNumber: `2024-${Math.floor(1000 + Math.random() * 9000)}`,
       createdAt: new Date().toISOString(),
       avatar: params.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
@@ -375,12 +382,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await saveUserAccount(newUser);
 
       if (!isAdminEmail) {
+        if (rawCode) {
+          // If a class code was provided on registration, initialize its scoreboard
+          const studentScoreBoard: StudentScoreBoard = {
+            id: `sb-${newUser.id}-${rawCode.toLowerCase()}`,
+            studentId: newUser.id,
+            studentNumber: newUser.studentNumber,
+            lrn: newUser.lrn,
+            studentName: newUser.displayName,
+            studentEmail: newUser.email,
+            classCode: rawCode,
+            subjectName: 'Enrolled Subject',
+            section: 'Section',
+            teacherName: 'Assigned Faculty',
+            writtenWorks: [
+              { id: 'ww-1', title: 'Written Work 1', score: 0, maxScore: 25 },
+              { id: 'ww-2', title: 'Written Work 2', score: 0, maxScore: 25 },
+              { id: 'ww-3', title: 'Written Work 3', score: 0, maxScore: 20 },
+            ],
+            performanceTasks: [
+              { id: 'pt-1', title: 'Product/Performance Task 1', score: 0, maxScore: 30 },
+              { id: 'pt-2', title: 'Product/Performance Task 2', score: 0, maxScore: 30 },
+              { id: 'pt-3', title: 'Product/Performance Task 3', score: 0, maxScore: 30 },
+            ],
+            summativeTests: [
+              { id: 'st-1', title: 'Summative Test 1', score: 0, maxScore: 30 },
+              { id: 'st-2', title: 'Summative Test 2', score: 0, maxScore: 30 },
+            ],
+            termExam: {
+              id: 'term-1',
+              title: 'Quarterly Term Exam',
+              score: 0,
+              maxScore: 60,
+            },
+            remarks: 'New student account.',
+            updatedAt: new Date().toISOString(),
+          };
+          await saveScoreBoard(studentScoreBoard);
+        }
+
         // Alert Admin in real-time
         await addNotification({
           id: `notif-${Date.now()}`,
           recipientRole: 'admin',
           title: 'New Student Registration Pending Approval',
-          message: `${displayName} (LRN: ${newUser.lrn || 'N/A'}) registered for Class Code ${newUser.classCode}.`,
+          message: `${displayName} (LRN: ${newUser.lrn || 'N/A'}) registered as student.`,
           type: 'approval',
           read: false,
           createdAt: new Date().toISOString(),
@@ -395,6 +441,137 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true, user: newUser };
     }
   };
+
+  const enrollInSubject = async (
+    rawClassCode: string,
+    availableClasses: ClassSubject[]
+  ): Promise<{ success: boolean; message: string; subject?: ClassSubject }> => {
+    if (!currentUser) {
+      return { success: false, message: 'You must be signed in to enroll in a subject.' };
+    }
+    const code = rawClassCode.trim().toUpperCase();
+    if (!code) {
+      return { success: false, message: 'Please enter a valid Subject / Class Code.' };
+    }
+
+    // Match against available classes
+    const matchedClass = availableClasses.find(
+      (c) => c.classCode.trim().toUpperCase() === code
+    );
+
+    if (!matchedClass) {
+      return {
+        success: false,
+        message: `Class Code "${code}" was not found. Please double-check the code with your teacher.`,
+      };
+    }
+
+    const currentEnrolled = currentUser.enrolledClassCodes || (currentUser.classCode ? [currentUser.classCode] : []);
+    if (currentEnrolled.some((c) => c.trim().toUpperCase() === code)) {
+      return {
+        success: false,
+        message: `You are already enrolled in ${matchedClass.subjectName} (${matchedClass.classCode}).`,
+      };
+    }
+
+    const updatedEnrolled = Array.from(new Set([...currentEnrolled, matchedClass.classCode]));
+    const updatedUser: UserAccount = {
+      ...currentUser,
+      classCode: updatedEnrolled[0] || matchedClass.classCode,
+      enrolledClassCodes: updatedEnrolled,
+    };
+
+    // Create or initialize scoreboard for this subject
+    const studentScoreBoard: StudentScoreBoard = {
+      id: `sb-${currentUser.id}-${matchedClass.classCode.toLowerCase()}`,
+      studentId: currentUser.id,
+      studentNumber: currentUser.studentNumber || '2024-XXXX',
+      lrn: currentUser.lrn || 'Pending DepEd LRN',
+      studentName: currentUser.displayName,
+      studentEmail: currentUser.email,
+      classCode: matchedClass.classCode,
+      subjectName: matchedClass.subjectName,
+      section: matchedClass.section,
+      teacherName: matchedClass.teacherName,
+      writtenWorks: [
+        { id: 'ww-1', title: 'Written Work 1', score: 0, maxScore: 25 },
+        { id: 'ww-2', title: 'Written Work 2', score: 0, maxScore: 25 },
+        { id: 'ww-3', title: 'Written Work 3', score: 0, maxScore: 20 },
+      ],
+      performanceTasks: [
+        { id: 'pt-1', title: 'Product/Performance Task 1', score: 0, maxScore: 30 },
+        { id: 'pt-2', title: 'Product/Performance Task 2', score: 0, maxScore: 30 },
+        { id: 'pt-3', title: 'Product/Performance Task 3', score: 0, maxScore: 30 },
+      ],
+      summativeTests: [
+        { id: 'st-1', title: 'Summative Test 1', score: 0, maxScore: 30 },
+        { id: 'st-2', title: 'Summative Test 2', score: 0, maxScore: 30 },
+      ],
+      termExam: {
+        id: 'term-1',
+        title: 'Quarterly Term Exam',
+        score: 0,
+        maxScore: 60,
+      },
+      remarks: 'Enrolled via subject code.',
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await saveScoreBoard(studentScoreBoard);
+      await saveUserAccount(updatedUser);
+      setCurrentUser(updatedUser);
+      setUsersList((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
+
+      // Alert teacher in real-time
+      if (matchedClass.teacherId) {
+        await addNotification({
+          id: `notif-${Date.now()}`,
+          recipientId: matchedClass.teacherId,
+          recipientRole: 'teacher',
+          title: 'Student Joined Your Class',
+          message: `${currentUser.displayName} has joined ${matchedClass.subjectName} (${matchedClass.classCode}).`,
+          type: 'system',
+          read: false,
+          createdAt: new Date().toISOString(),
+        });
+      }
+
+      return {
+        success: true,
+        message: `Successfully enrolled in ${matchedClass.subjectName} (${matchedClass.classCode})!`,
+        subject: matchedClass,
+      };
+    } catch (err: any) {
+      console.error('Enroll error:', err);
+      return { success: false, message: 'Could not complete enrollment. Please try again.' };
+    }
+  };
+
+  const unenrollSubject = async (
+    rawClassCode: string
+  ): Promise<{ success: boolean; message: string }> => {
+    if (!currentUser) return { success: false, message: 'Not signed in.' };
+    const code = rawClassCode.trim().toUpperCase();
+    const currentEnrolled = currentUser.enrolledClassCodes || (currentUser.classCode ? [currentUser.classCode] : []);
+    const nextEnrolled = currentEnrolled.filter((c) => c.trim().toUpperCase() !== code);
+
+    const updatedUser: UserAccount = {
+      ...currentUser,
+      classCode: nextEnrolled[0] || undefined,
+      enrolledClassCodes: nextEnrolled,
+    };
+
+    try {
+      await saveUserAccount(updatedUser);
+      setCurrentUser(updatedUser);
+      setUsersList((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
+      return { success: true, message: `Unenrolled from class ${code}.` };
+    } catch (err) {
+      return { success: false, message: 'Failed to unenroll.' };
+    }
+  };
+
 
   const signUpTeacher = async (params: {
     name: string;
@@ -615,6 +792,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signUpTeacher,
         requestPasswordReset,
         verifyOtpAndResetPassword,
+        enrollInSubject,
+        unenrollSubject,
         updateUserAvatar,
         updateUserAccount,
         deleteUser,

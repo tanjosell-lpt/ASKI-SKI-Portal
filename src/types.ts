@@ -11,7 +11,8 @@ export interface UserAccount {
   password?: string;
   role: UserRole;
   status: ApprovalStatus;
-  classCode?: string; // used by student to join class
+  classCode?: string; // used by student to join class (legacy/default)
+  enrolledClassCodes?: string[]; // Multiple enrolled classes/subjects like Google Classroom
   lrn?: string; // 12-digit DepEd Learner Reference Number
   studentNumber?: string;
   createdAt: string;

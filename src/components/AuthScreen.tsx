@@ -35,7 +35,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
     signUp, 
     signUpTeacher, 
     signInWithGoogle, 
-    switchDemoRole,
     requestPasswordReset,
     verifyOtpAndResetPassword 
   } = useAuth();
@@ -1053,60 +1052,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
             </div>
           </div>
         )}
-
-        {/* 1-Click Fast Role Tester for Evaluator */}
-        <div className="bg-white border border-slate-200 rounded-3xl p-4 text-xs space-y-2 shadow-sm">
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-            <span>Instant Demo Switcher (1-Click Test)</span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => switchDemoRole('admin')}
-              className="p-2.5 rounded-xl bg-slate-50 hover:bg-blue-50 border border-slate-200 text-left transition flex items-center justify-between"
-            >
-              <div>
-                <div className="font-bold text-[#0b3b60] text-[11px]">Portal Admin</div>
-                <div className="text-[10px] text-slate-500">Add teachers & verify</div>
-              </div>
-              <ShieldCheck className="w-4 h-4 text-amber-500" />
-            </button>
-
-            <button
-              onClick={() => switchDemoRole('teacher')}
-              className="p-2.5 rounded-xl bg-slate-50 hover:bg-blue-50 border border-slate-200 text-left transition flex items-center justify-between"
-            >
-              <div>
-                <div className="font-bold text-[#0b3b60] text-[11px]">Teacher Console</div>
-                <div className="text-[10px] text-slate-500">Prof. Tanjosell</div>
-              </div>
-              <BookOpen className="w-4 h-4 text-[#0b3b60]" />
-            </button>
-
-            <button
-              onClick={() => switchDemoRole('student', 'approved')}
-              className="p-2.5 rounded-xl bg-slate-50 hover:bg-blue-50 border border-slate-200 text-left transition flex items-center justify-between"
-            >
-              <div>
-                <div className="font-bold text-[#0b3b60] text-[11px]">Jiro Adriano</div>
-                <div className="text-[10px] text-emerald-600">Approved Student</div>
-              </div>
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            </button>
-
-            <button
-              onClick={() => switchDemoRole('student', 'pending')}
-              className="p-2.5 rounded-xl bg-slate-50 hover:bg-blue-50 border border-slate-200 text-left transition flex items-center justify-between"
-            >
-              <div>
-                <div className="font-bold text-[#0b3b60] text-[11px]">Calvin Bulanadi</div>
-                <div className="text-[10px] text-amber-600">Pending Approval</div>
-              </div>
-              <Clock className="w-4 h-4 text-amber-500" />
-            </button>
-          </div>
-        </div>
 
         {/* Footer: Strictly Transformation Discipline Excellence */}
         <footer className="pt-4 pb-2 text-center select-none">

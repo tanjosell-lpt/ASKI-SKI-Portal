@@ -7,6 +7,8 @@ import {
   subscribeToUsers, 
   addNotification, 
   deleteUserAccount, 
+  deleteStudentCascading,
+  deleteTeacherCascading,
   ensureAdminAccount,
   saveScoreBoard,
   subscribeToEnrollments,
@@ -160,6 +162,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const updated = sanitized.find((u) => u.id === activeUserId);
         if (updated) {
           setCurrentUser(updated);
+        } else if (currentUser && currentUser.role !== 'admin') {
+          // Current user account was deleted by Administrator! Revoke access immediately!
+          console.warn('Account was removed by administrator. Revoking access.');
+          try {
+            localStorage.removeItem(SESSION_STORAGE_KEY);
+          } catch {}
+          setCurrentUser(null);
         }
       }
 
@@ -814,11 +823,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteUser = async (userId: string) => {
+    const target = usersList.find((u) => u.id === userId);
     setUsersList((prev) => prev.filter((u) => u.id !== userId));
     if (currentUser && currentUser.id === userId) {
+      try {
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+      } catch {}
       setCurrentUser(null);
     }
-    await deleteUserAccount(userId);
+    if (target?.role === 'teacher') {
+      await deleteTeacherCascading(userId, target.displayName, target.email);
+    } else {
+      await deleteStudentCascading(userId, target?.email);
+    }
   };
 
   const ensureAdminRestored = async () => {

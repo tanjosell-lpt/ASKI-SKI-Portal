@@ -5,6 +5,7 @@ import {
   BroadcastNote, 
   ScoreItem, 
   UserAccount,
+  SubjectEnrollment,
   calculateScoreBoardTotals 
 } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -59,7 +60,14 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   broadcasts,
   onOpenUploadModal,
 }) => {
-  const { currentUser, updateUserAvatar, usersList } = useAuth();
+  const { 
+    currentUser, 
+    updateUserAvatar, 
+    usersList, 
+    enrollmentsList, 
+    approveSubjectEnrollment, 
+    rejectSubjectEnrollment 
+  } = useAuth();
   const [selectedClassCode, setSelectedClassCode] = useState<string>(classes[0]?.classCode || 'SKI-10A');
   const [searchQuery, setSearchQuery] = useState('');
   const [actionStatus, setActionStatus] = useState<string | null>(null);
@@ -124,11 +132,25 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     );
   }, [usersList, teacherClassCodes]);
 
+  // Pending subject enrollment requests for THIS teacher's classes
+  const pendingEnrollmentsForTeacher = useMemo(() => {
+    if (teacherClassCodes.length === 0) return [];
+    return enrollmentsList.filter(
+      (e) => teacherClassCodes.includes(e.classCode.toUpperCase()) && e.status === 'pending'
+    );
+  }, [enrollmentsList, teacherClassCodes]);
+
   // Filter scoreboards for the selected class code
   const classScoreboards = useMemo(() => {
     if (!selectedClassCode) return [];
     return scoreboards.filter((sb) => {
       const matchCode = sb.classCode.toUpperCase() === selectedClassCode.toUpperCase();
+      // Ensure pending or rejected users don't show on official roster
+      const user = usersList.find(
+        (u) => u.id === sb.studentId || (u.email && sb.studentEmail && u.email.toLowerCase() === sb.studentEmail.toLowerCase())
+      );
+      if (user && user.status === 'pending') return false;
+
       const q = searchQuery.toLowerCase().trim();
       const matchSearch =
         !q ||
@@ -137,7 +159,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         (sb.lrn && sb.lrn.includes(q));
       return matchCode && matchSearch;
     });
-  }, [scoreboards, selectedClassCode, searchQuery]);
+  }, [scoreboards, selectedClassCode, searchQuery, usersList]);
 
   // Task counts for current class
   const currentWWList = classScoreboards[0]?.writtenWorks || [
@@ -165,7 +187,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     }
   };
 
-  // --- Teacher Student Approval Handlers ---
+  // --- Teacher Student Registration Approval Handlers ---
   const handleTeacherApproveStudent = async (student: UserAccount) => {
     await updateUserStatus(student.id, 'approved');
     await addNotification({
@@ -190,12 +212,37 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     }
   };
 
-  const handleTeacherApproveAll = async () => {
+  const handleTeacherApproveAllStudents = async () => {
     if (window.confirm(`Approve all ${pendingStudentsForTeacher.length} pending student registrations?`)) {
       for (const student of pendingStudentsForTeacher) {
         await updateUserStatus(student.id, 'approved');
       }
       setActionStatus(`Approved all ${pendingStudentsForTeacher.length} students`);
+      setTimeout(() => setActionStatus(null), 3000);
+    }
+  };
+
+  // --- Teacher Subject Enrollment Approval Handlers ---
+  const handleTeacherApproveEnrollment = async (enrollment: SubjectEnrollment) => {
+    await approveSubjectEnrollment(enrollment, currentUser?.displayName || 'Faculty Teacher');
+    setActionStatus(`Approved ${enrollment.studentName} for ${enrollment.subjectName} (${enrollment.classCode})`);
+    setTimeout(() => setActionStatus(null), 3000);
+  };
+
+  const handleTeacherRejectEnrollment = async (enrollment: SubjectEnrollment) => {
+    if (window.confirm(`Reject subject enrollment for ${enrollment.studentName} in ${enrollment.subjectName} (${enrollment.classCode})?`)) {
+      await rejectSubjectEnrollment(enrollment.id, currentUser?.displayName || 'Faculty Teacher');
+      setActionStatus(`Rejected enrollment for ${enrollment.studentName}`);
+      setTimeout(() => setActionStatus(null), 3000);
+    }
+  };
+
+  const handleTeacherApproveAllEnrollments = async () => {
+    if (window.confirm(`Approve all ${pendingEnrollmentsForTeacher.length} subject enrollment requests?`)) {
+      for (const enr of pendingEnrollmentsForTeacher) {
+        await approveSubjectEnrollment(enr, currentUser?.displayName || 'Faculty Teacher');
+      }
+      setActionStatus(`Approved all ${pendingEnrollmentsForTeacher.length} subject enrollments`);
       setTimeout(() => setActionStatus(null), 3000);
     }
   };
@@ -409,7 +456,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Teacher Student Approvals Section: Allow teacher to approve/reject students */}
+      {/* Teacher Student Registration Approvals Section */}
       {pendingStudentsForTeacher.length > 0 && (
         <div className="liquid-glass p-5 rounded-3xl border border-amber-300/60 shadow-lg space-y-3.5 animate-in fade-in">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -428,7 +475,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
 
             {pendingStudentsForTeacher.length > 1 && (
               <button
-                onClick={handleTeacherApproveAll}
+                onClick={handleTeacherApproveAllStudents}
                 className="apple-bubble-primary px-3.5 py-1.5 rounded-xl text-white text-xs font-bold shadow-xs self-start sm:self-auto"
               >
                 Approve All ({pendingStudentsForTeacher.length})
@@ -464,6 +511,78 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
                   </button>
                   <button
                     onClick={() => handleTeacherRejectStudent(student)}
+                    className="apple-tap p-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 transition"
+                    title="Reject"
+                  >
+                    <UserX className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Teacher Subject Enrollment Approvals Section: Requests from students entering class code */}
+      {pendingEnrollmentsForTeacher.length > 0 && (
+        <div className="liquid-glass p-5 rounded-3xl border border-blue-300/60 shadow-lg space-y-3.5 animate-in fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-[#007AFF]"></span>
+              </span>
+              <h3 className="font-bold text-sm text-slate-900">
+                Subject Enrollment Requests ({pendingEnrollmentsForTeacher.length})
+              </h3>
+              <span className="text-xs text-slate-500 hidden sm:inline">
+                Students requesting to join your subjects
+              </span>
+            </div>
+
+            {pendingEnrollmentsForTeacher.length > 1 && (
+              <button
+                onClick={handleTeacherApproveAllEnrollments}
+                className="apple-bubble-primary px-3.5 py-1.5 rounded-xl text-white text-xs font-bold shadow-xs self-start sm:self-auto"
+              >
+                Approve All Requests ({pendingEnrollmentsForTeacher.length})
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {pendingEnrollmentsForTeacher.map((enr) => (
+              <div
+                key={enr.id}
+                className="apple-glass p-3.5 rounded-2xl border border-slate-200/80 bg-white/95 flex items-center justify-between gap-3 shadow-xs"
+              >
+                <div className="min-w-0">
+                  <div className="font-bold text-xs text-[#0b3b60] truncate">
+                    {enr.studentName}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono truncate">
+                    {enr.lrn ? `LRN: ${enr.lrn}` : (enr.studentNumber || enr.studentEmail)}
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span className="text-[10px] font-bold text-[#007AFF] bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100">
+                      {enr.classCode}
+                    </span>
+                    <span className="text-[10px] font-medium text-slate-600 truncate">
+                      {enr.subjectName}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => handleTeacherApproveEnrollment(enr)}
+                    className="apple-tap p-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white shadow-xs transition"
+                    title="Approve Subject Enrollment"
+                  >
+                    <UserCheck className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleTeacherRejectEnrollment(enr)}
                     className="apple-tap p-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 transition"
                     title="Reject"
                   >

@@ -260,10 +260,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
     });
 
     if (res.success && res.user) {
-      setTeacherSuccessMsg(`Teacher account created for ${res.user.displayName}! Signing in...`);
+      setTeacherSuccessMsg(`Faculty registration submitted for ${res.user.displayName}! Your account is pending Administrator approval. Once verified by an administrator, you will be able to sign in.`);
       setTimeout(() => {
-        signIn(res.user!.email, res.user!.password || teacherPassword, 'teacher');
-      }, 1000);
+        setActiveTab('signin');
+        setSignInIdentifier(res.user?.email || '');
+      }, 3000);
     } else {
       setErrorMsg(res.message || 'Teacher registration failed.');
     }
@@ -722,16 +723,6 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
                           required
                         />
                       </div>
-                    </div>
-
-                    <div className="p-3 rounded-2xl bg-blue-50/80 border border-blue-200/80 text-[11px] text-[#0b3b60] space-y-1">
-                      <div className="font-bold flex items-center gap-1.5">
-                        <BookOpen className="w-3.5 h-3.5 text-amber-600" />
-                        <span>Google Classroom Style Subject Enrollment</span>
-                      </div>
-                      <p className="text-slate-600 leading-relaxed">
-                        No class code needed to register! Once signed in, you can enroll in multiple subjects with different teachers using each subject's class code.
-                      </p>
                     </div>
 
                     <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800">

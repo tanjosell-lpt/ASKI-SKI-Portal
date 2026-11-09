@@ -14,7 +14,8 @@ import {
   ClassSubject, 
   StudentScoreBoard, 
   BroadcastNote, 
-  AppNotification 
+  AppNotification,
+  SubjectEnrollment 
 } from '../types';
 import { 
   INITIAL_CLASSES, 
@@ -29,6 +30,7 @@ const CLASSES_COL = 'classes';
 const SCOREBOARDS_COL = 'studentScores';
 const BROADCASTS_COL = 'broadcasts';
 const NOTIFICATIONS_COL = 'notifications';
+const ENROLLMENTS_COL = 'subjectEnrollments';
 
 // --- Users (Auth / Directory / Approvals) ---
 export function subscribeToUsers(
@@ -265,6 +267,66 @@ export async function markNotificationAsRead(notificationId: string): Promise<vo
     await updateDoc(docRef, { read: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `${NOTIFICATIONS_COL}/${notificationId}`);
+  }
+}
+
+// --- Subject Enrollments (Class Joining & Approvals) ---
+export function subscribeToEnrollments(
+  onData: (enrollments: SubjectEnrollment[]) => void,
+  onError?: (err: any) => void
+) {
+  return onSnapshot(
+    collection(db, ENROLLMENTS_COL),
+    (snapshot) => {
+      const items: SubjectEnrollment[] = [];
+      snapshot.forEach((d) => {
+        items.push({ id: d.id, ...d.data() } as SubjectEnrollment);
+      });
+      items.sort((a, b) => new Date(b.requestedAt || 0).getTime() - new Date(a.requestedAt || 0).getTime());
+      onData(items);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.GET, ENROLLMENTS_COL);
+      } catch (e) {
+        if (onError) onError(e);
+      }
+    }
+  );
+}
+
+export async function saveSubjectEnrollment(enrollment: SubjectEnrollment): Promise<void> {
+  try {
+    const docRef = doc(db, ENROLLMENTS_COL, enrollment.id);
+    await setDoc(docRef, enrollment, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${ENROLLMENTS_COL}/${enrollment.id}`);
+  }
+}
+
+export async function updateEnrollmentStatus(
+  enrollmentId: string, 
+  status: 'approved' | 'rejected',
+  reviewerName?: string
+): Promise<void> {
+  try {
+    const docRef = doc(db, ENROLLMENTS_COL, enrollmentId);
+    await updateDoc(docRef, { 
+      status, 
+      reviewedAt: new Date().toISOString(),
+      ...(reviewerName ? { reviewedBy: reviewerName } : {})
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `${ENROLLMENTS_COL}/${enrollmentId}`);
+  }
+}
+
+export async function deleteSubjectEnrollment(enrollmentId: string): Promise<void> {
+  try {
+    const docRef = doc(db, ENROLLMENTS_COL, enrollmentId);
+    await deleteDoc(docRef);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `${ENROLLMENTS_COL}/${enrollmentId}`);
   }
 }
 

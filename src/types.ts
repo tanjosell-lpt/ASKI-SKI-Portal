@@ -32,6 +32,26 @@ export interface ClassSubject {
   createdAt: string;
 }
 
+export interface SubjectEnrollment {
+  id: string; // e.g. enr-studentId-classCode
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  lrn?: string;
+  studentNumber?: string;
+  avatar?: string;
+  classCode: string;
+  subjectName: string;
+  section?: string;
+  teacherId?: string;
+  teacherName?: string;
+  term?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  requestedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+}
+
 export interface ScoreItem {
   id: string;
   title: string;

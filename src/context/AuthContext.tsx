@@ -1,14 +1,18 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { auth, googleProvider } from '../firebase';
-import { UserAccount, UserRole, ApprovalStatus, StudentScoreBoard, ClassSubject } from '../types';
+import { UserAccount, UserRole, ApprovalStatus, StudentScoreBoard, ClassSubject, SubjectEnrollment } from '../types';
 import { 
   saveUserAccount, 
   subscribeToUsers, 
   addNotification, 
   deleteUserAccount, 
   ensureAdminAccount,
-  saveScoreBoard
+  saveScoreBoard,
+  subscribeToEnrollments,
+  saveSubjectEnrollment,
+  updateEnrollmentStatus,
+  deleteSubjectEnrollment
 } from '../services/dbService';
 
 interface AuthContextType {
@@ -17,6 +21,7 @@ interface AuthContextType {
   status: ApprovalStatus | null;
   isAuthenticated: boolean;
   usersList: UserAccount[];
+  enrollmentsList: SubjectEnrollment[];
   signIn: (emailOrLrn: string, password?: string, expectedRole?: UserRole) => Promise<{ success: boolean; message?: string }>;
   signUp: (params: {
     firstName: string;
@@ -38,6 +43,8 @@ interface AuthContextType {
   verifyOtpAndResetPassword: (identifier: string, otpCode: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
   enrollInSubject: (classCode: string, availableClasses: ClassSubject[]) => Promise<{ success: boolean; message: string; subject?: ClassSubject }>;
   unenrollSubject: (classCode: string) => Promise<{ success: boolean; message: string }>;
+  approveSubjectEnrollment: (enrollment: SubjectEnrollment, reviewerName?: string) => Promise<void>;
+  rejectSubjectEnrollment: (enrollmentId: string, reviewerName?: string) => Promise<void>;
   updateUserAvatar: (userId: string, avatarData: string) => Promise<void>;
   updateUserAccount: (user: UserAccount) => Promise<void>;
   deleteUser: (userId: string) => Promise<void>;
@@ -59,8 +66,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Students and users land directly on the portal login screen when entering the link
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
   const [usersList, setUsersList] = useState<UserAccount[]>([]);
+  const [enrollmentsList, setEnrollmentsList] = useState<SubjectEnrollment[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [otpRequests, setOtpRequests] = useState<{ [identifier: string]: { code: string; expiresAt: number } }>({});
+
+  // Sync enrollments list from Firestore
+  useEffect(() => {
+    const unsub = subscribeToEnrollments((live) => {
+      setEnrollmentsList(live);
+    });
+    return () => unsub();
+  }, []);
 
   // Guarantee that tanjosell.lpt@gmail.com and admin account are recognized
   useEffect(() => {
@@ -212,16 +228,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    if (found.role === 'student' && found.status === 'pending') {
+    if (found.status === 'pending') {
       setCurrentUser(found);
       return { 
         success: false, 
-        message: 'Your registration is still pending Admin approval. Please wait for an administrator to accept your request.' 
+        message: found.role === 'teacher'
+          ? 'Your faculty registration is pending Administrator approval. Please wait for an administrator to verify your credentials.'
+          : 'Your registration is still pending Admin approval. Please wait for an administrator to accept your request.' 
       };
     }
 
-    if (found.role === 'student' && found.status === 'rejected') {
-      return { success: false, message: 'Your registration was rejected by the administrator. Contact your faculty advisor.' };
+    if (found.status === 'rejected') {
+      return { 
+        success: false, 
+        message: found.role === 'teacher'
+          ? 'Your faculty registration was not approved by the administrator.'
+          : 'Your registration was rejected by the administrator. Contact your faculty advisor.' 
+      };
     }
 
     setCurrentUser(found);
@@ -466,85 +489,184 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    const currentEnrolled = currentUser.enrolledClassCodes || (currentUser.classCode ? [currentUser.classCode] : []);
-    if (currentEnrolled.some((c) => c.trim().toUpperCase() === code)) {
-      return {
-        success: false,
-        message: `You are already enrolled in ${matchedClass.subjectName} (${matchedClass.classCode}).`,
-      };
+    // Check if student already enrolled or requested
+    const existing = enrollmentsList.find(
+      (e) => e.studentId === currentUser.id && e.classCode.toUpperCase() === code
+    );
+
+    if (existing) {
+      if (existing.status === 'approved') {
+        return {
+          success: false,
+          message: `You are already enrolled in ${matchedClass.subjectName} (${matchedClass.classCode}).`,
+        };
+      }
+      if (existing.status === 'pending') {
+        return {
+          success: false,
+          message: `You already submitted an enrollment request for ${matchedClass.subjectName} (${matchedClass.classCode}). Awaiting teacher or admin approval.`,
+        };
+      }
     }
 
-    const updatedEnrolled = Array.from(new Set([...currentEnrolled, matchedClass.classCode]));
-    const updatedUser: UserAccount = {
-      ...currentUser,
-      classCode: updatedEnrolled[0] || matchedClass.classCode,
-      enrolledClassCodes: updatedEnrolled,
-    };
-
-    // Create or initialize scoreboard for this subject
-    const studentScoreBoard: StudentScoreBoard = {
-      id: `sb-${currentUser.id}-${matchedClass.classCode.toLowerCase()}`,
+    // Generate enrollment request with status 'pending'
+    const enrollmentId = `enr-${currentUser.id}-${matchedClass.classCode.toLowerCase()}`;
+    const newEnrollment: SubjectEnrollment = {
+      id: enrollmentId,
       studentId: currentUser.id,
-      studentNumber: currentUser.studentNumber || '2024-XXXX',
-      lrn: currentUser.lrn || 'Pending DepEd LRN',
       studentName: currentUser.displayName,
       studentEmail: currentUser.email,
+      lrn: currentUser.lrn,
+      studentNumber: currentUser.studentNumber,
+      avatar: currentUser.avatar,
       classCode: matchedClass.classCode,
       subjectName: matchedClass.subjectName,
       section: matchedClass.section,
+      teacherId: matchedClass.teacherId,
       teacherName: matchedClass.teacherName,
-      writtenWorks: [
-        { id: 'ww-1', title: 'Written Work 1', score: 0, maxScore: 25 },
-        { id: 'ww-2', title: 'Written Work 2', score: 0, maxScore: 25 },
-        { id: 'ww-3', title: 'Written Work 3', score: 0, maxScore: 20 },
-      ],
-      performanceTasks: [
-        { id: 'pt-1', title: 'Product/Performance Task 1', score: 0, maxScore: 30 },
-        { id: 'pt-2', title: 'Product/Performance Task 2', score: 0, maxScore: 30 },
-        { id: 'pt-3', title: 'Product/Performance Task 3', score: 0, maxScore: 30 },
-      ],
-      summativeTests: [
-        { id: 'st-1', title: 'Summative Test 1', score: 0, maxScore: 30 },
-        { id: 'st-2', title: 'Summative Test 2', score: 0, maxScore: 30 },
-      ],
-      termExam: {
-        id: 'term-1',
-        title: 'Quarterly Term Exam',
-        score: 0,
-        maxScore: 60,
-      },
-      remarks: 'Enrolled via subject code.',
-      updatedAt: new Date().toISOString(),
+      term: matchedClass.term,
+      status: 'pending',
+      requestedAt: new Date().toISOString(),
     };
 
     try {
-      await saveScoreBoard(studentScoreBoard);
-      await saveUserAccount(updatedUser);
-      setCurrentUser(updatedUser);
-      setUsersList((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
+      await saveSubjectEnrollment(newEnrollment);
 
       // Alert teacher in real-time
       if (matchedClass.teacherId) {
         await addNotification({
-          id: `notif-${Date.now()}`,
+          id: `notif-${Date.now()}-t`,
           recipientId: matchedClass.teacherId,
           recipientRole: 'teacher',
-          title: 'Student Joined Your Class',
-          message: `${currentUser.displayName} has joined ${matchedClass.subjectName} (${matchedClass.classCode}).`,
-          type: 'system',
+          title: 'Student Enrollment Request',
+          message: `${currentUser.displayName} has requested to join your class: ${matchedClass.subjectName} (${matchedClass.classCode}).`,
+          type: 'approval',
           read: false,
           createdAt: new Date().toISOString(),
         });
       }
 
+      // Alert Admin in real-time
+      await addNotification({
+        id: `notif-${Date.now()}-a`,
+        recipientRole: 'admin',
+        title: 'New Subject Enrollment Request',
+        message: `${currentUser.displayName} requested enrollment in ${matchedClass.subjectName} (${matchedClass.classCode}) taught by ${matchedClass.teacherName}.`,
+        type: 'approval',
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+
       return {
         success: true,
-        message: `Successfully enrolled in ${matchedClass.subjectName} (${matchedClass.classCode})!`,
+        message: `Enrollment request for ${matchedClass.subjectName} (${matchedClass.classCode}) submitted! Awaiting teacher or admin approval.`,
         subject: matchedClass,
       };
     } catch (err: any) {
       console.error('Enroll error:', err);
-      return { success: false, message: 'Could not complete enrollment. Please try again.' };
+      return { success: false, message: 'Could not complete enrollment request. Please try again.' };
+    }
+  };
+
+  const approveSubjectEnrollment = async (
+    enrollment: SubjectEnrollment,
+    reviewerName = 'Instructor / Admin'
+  ): Promise<void> => {
+    try {
+      await updateEnrollmentStatus(enrollment.id, 'approved', reviewerName);
+
+      // Add to student's enrolledClassCodes in UserAccount
+      const targetUser = usersList.find((u) => u.id === enrollment.studentId);
+      if (targetUser) {
+        const currentList = targetUser.enrolledClassCodes || [];
+        if (!currentList.includes(enrollment.classCode)) {
+          const nextList = [...currentList, enrollment.classCode];
+          const updatedUser: UserAccount = {
+            ...targetUser,
+            classCode: nextList[0] || enrollment.classCode,
+            enrolledClassCodes: nextList,
+          };
+          await saveUserAccount(updatedUser);
+          if (currentUser && currentUser.id === targetUser.id) {
+            setCurrentUser(updatedUser);
+          }
+        }
+      }
+
+      // Initialize official StudentScoreBoard for this approved subject
+      const studentScoreBoard: StudentScoreBoard = {
+        id: `sb-${enrollment.studentId}-${enrollment.classCode.toLowerCase()}`,
+        studentId: enrollment.studentId,
+        studentNumber: enrollment.studentNumber || '2024-XXXX',
+        lrn: enrollment.lrn || 'Pending DepEd LRN',
+        studentName: enrollment.studentName,
+        studentEmail: enrollment.studentEmail,
+        classCode: enrollment.classCode,
+        subjectName: enrollment.subjectName,
+        section: enrollment.section || 'Regular Section',
+        teacherName: enrollment.teacherName || 'Assigned Faculty',
+        writtenWorks: [
+          { id: 'ww-1', title: 'Written Work 1', score: 0, maxScore: 25 },
+          { id: 'ww-2', title: 'Written Work 2', score: 0, maxScore: 25 },
+          { id: 'ww-3', title: 'Written Work 3', score: 0, maxScore: 20 },
+        ],
+        performanceTasks: [
+          { id: 'pt-1', title: 'Product/Performance Task 1', score: 0, maxScore: 30 },
+          { id: 'pt-2', title: 'Product/Performance Task 2', score: 0, maxScore: 30 },
+          { id: 'pt-3', title: 'Product/Performance Task 3', score: 0, maxScore: 30 },
+        ],
+        summativeTests: [
+          { id: 'st-1', title: 'Summative Test 1', score: 0, maxScore: 30 },
+          { id: 'st-2', title: 'Summative Test 2', score: 0, maxScore: 30 },
+        ],
+        termExam: {
+          id: 'term-1',
+          title: 'Quarterly Term Exam',
+          score: 0,
+          maxScore: 60,
+        },
+        remarks: 'Enrollment approved. Ready for scoring.',
+        updatedAt: new Date().toISOString(),
+      };
+      await saveScoreBoard(studentScoreBoard);
+
+      // Notify the student
+      await addNotification({
+        id: `notif-${Date.now()}`,
+        recipientId: enrollment.studentId,
+        recipientRole: 'student',
+        title: 'Subject Enrollment Approved!',
+        message: `Your enrollment in ${enrollment.subjectName} (${enrollment.classCode}) has been approved by ${reviewerName}! Your scoreboard is now active.`,
+        type: 'approval',
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error('approveSubjectEnrollment error:', err);
+    }
+  };
+
+  const rejectSubjectEnrollment = async (
+    enrollmentId: string,
+    reviewerName = 'Instructor / Admin'
+  ): Promise<void> => {
+    try {
+      await updateEnrollmentStatus(enrollmentId, 'rejected', reviewerName);
+      const target = enrollmentsList.find((e) => e.id === enrollmentId);
+      if (target) {
+        await addNotification({
+          id: `notif-${Date.now()}`,
+          recipientId: target.studentId,
+          recipientRole: 'student',
+          title: 'Subject Enrollment Request Declined',
+          message: `Your enrollment request for ${target.subjectName} (${target.classCode}) was declined by ${reviewerName}.`,
+          type: 'approval',
+          read: false,
+          createdAt: new Date().toISOString(),
+        });
+      }
+    } catch (err) {
+      console.error('rejectSubjectEnrollment error:', err);
     }
   };
 
@@ -563,6 +685,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     try {
+      const enrollmentId = `enr-${currentUser.id}-${code.toLowerCase()}`;
+      await deleteSubjectEnrollment(enrollmentId);
       await saveUserAccount(updatedUser);
       setCurrentUser(updatedUser);
       setUsersList((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
@@ -571,7 +695,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: 'Failed to unenroll.' };
     }
   };
-
 
   const signUpTeacher = async (params: {
     name: string;
@@ -591,13 +714,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       email: params.email.toLowerCase().trim(),
       password: params.password || 'teacher123',
       role: 'teacher',
-      status: 'approved', // Teachers added are immediately active
+      status: 'pending', // Teacher registrations require Admin approval
       createdAt: new Date().toISOString(),
       avatar: params.avatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
     };
 
     try {
       await saveUserAccount(newTeacher);
+
+      // Alert Admin in real-time
+      await addNotification({
+        id: `notif-${Date.now()}`,
+        recipientRole: 'admin',
+        title: 'New Faculty Registration Pending Approval',
+        message: `${params.name.trim()} (${newTeacher.email}) registered as faculty teacher and is pending approval.`,
+        type: 'approval',
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+
       return { success: true, user: newTeacher };
     } catch (err: any) {
       console.error('Teacher sign up error:', err);
@@ -787,6 +922,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         status: currentUser?.status || null,
         isAuthenticated: !!currentUser,
         usersList,
+        enrollmentsList,
         signIn,
         signUp,
         signUpTeacher,
@@ -794,6 +930,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         verifyOtpAndResetPassword,
         enrollInSubject,
         unenrollSubject,
+        approveSubjectEnrollment,
+        rejectSubjectEnrollment,
         updateUserAvatar,
         updateUserAccount,
         deleteUser,

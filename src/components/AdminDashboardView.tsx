@@ -6,7 +6,8 @@ import {
   ScoreItem,
   UserRole,
   ApprovalStatus,
-  calculateScoreBoardTotals 
+  calculateScoreBoardTotals,
+  SubjectEnrollment 
 } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { AskiLogo } from './AskiLogo';
@@ -52,7 +53,13 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   classes,
   scoreboards,
 }) => {
-  const { signUpTeacher, ensureAdminRestored } = useAuth();
+  const { 
+    signUpTeacher, 
+    ensureAdminRestored, 
+    enrollmentsList, 
+    approveSubjectEnrollment, 
+    rejectSubjectEnrollment 
+  } = useAuth();
   const [activeTab, setActiveTab] = useState<'pending' | 'students' | 'teachers' | 'classes' | 'scoreboards'>('pending');
   const [searchQuery, setSearchQuery] = useState('');
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -64,9 +71,23 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [isAddTeacherOpen, setIsAddTeacherOpen] = useState(false);
   const [isAddClassOpen, setIsAddClassOpen] = useState(false);
 
+  // Filter pending users (both students and teachers)
+  const pendingUsers = useMemo(() => {
+    return users.filter((u) => u.status === 'pending');
+  }, [users]);
+
   const pendingStudents = useMemo(() => {
     return users.filter((u) => u.role === 'student' && u.status === 'pending');
   }, [users]);
+
+  const pendingTeachers = useMemo(() => {
+    return users.filter((u) => u.role === 'teacher' && u.status === 'pending');
+  }, [users]);
+
+  // Filter pending subject enrollment requests
+  const pendingEnrollments = useMemo(() => {
+    return enrollmentsList.filter((e) => e.status === 'pending');
+  }, [enrollmentsList]);
 
   const teacherUsers = useMemo(() => {
     return users.filter((u) => u.role === 'teacher');
@@ -77,23 +98,39 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     await addNotification({
       id: `notif-${Date.now()}`,
       recipientId: user.id,
-      recipientRole: 'student',
-      title: 'Registration Approved',
-      message: `Your account for Class Code ${user.classCode || 'SKI-10A'} has been accepted. You can now view your score board!`,
+      recipientRole: user.role,
+      title: user.role === 'teacher' ? 'Faculty Registration Approved' : 'Student Registration Approved',
+      message: user.role === 'teacher'
+        ? `Your faculty teacher account has been verified and approved by the Administrator. You can now sign in to the Faculty Portal.`
+        : `Your student account has been approved by the Administrator. You can now enroll in your subjects using the codes provided by your teachers.`,
       type: 'approval',
       read: false,
       createdAt: new Date().toISOString(),
     });
-    setActionSuccess(`Approved ${user.displayName}`);
+    setActionSuccess(`Approved ${user.role === 'teacher' ? 'Faculty Teacher' : 'Student'} ${user.displayName}`);
     setTimeout(() => setActionSuccess(null), 3000);
   };
 
+  const handleApproveEnrollment = async (enrollment: SubjectEnrollment) => {
+    await approveSubjectEnrollment(enrollment, 'Administrator');
+    setActionSuccess(`Approved enrollment for ${enrollment.studentName} in ${enrollment.subjectName} (${enrollment.classCode})`);
+    setTimeout(() => setActionSuccess(null), 3000);
+  };
+
+  const handleRejectEnrollment = async (enrollmentId: string, studentName: string) => {
+    if (window.confirm(`Reject enrollment request for ${studentName}?`)) {
+      await rejectSubjectEnrollment(enrollmentId, 'Administrator');
+      setActionSuccess(`Rejected enrollment request for ${studentName}`);
+      setTimeout(() => setActionSuccess(null), 3000);
+    }
+  };
+
   const handleApproveAll = async () => {
-    if (window.confirm(`Approve all ${pendingStudents.length} pending student registrations?`)) {
-      for (const student of pendingStudents) {
-        await updateUserStatus(student.id, 'approved');
+    if (window.confirm(`Approve all ${pendingUsers.length} pending account registrations?`)) {
+      for (const u of pendingUsers) {
+        await updateUserStatus(u.id, 'approved');
       }
-      setActionSuccess(`All ${pendingStudents.length} registrations approved`);
+      setActionSuccess(`All ${pendingUsers.length} registrations approved`);
       setTimeout(() => setActionSuccess(null), 3000);
     }
   };
@@ -262,13 +299,20 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       <div className="bg-slate-200/70 p-1.5 rounded-2xl flex items-center gap-1 backdrop-blur-xl border border-black/[0.04] overflow-x-auto">
         <button
           onClick={() => setActiveTab('pending')}
-          className={`apple-tap px-4 py-2 rounded-xl text-xs font-semibold transition shrink-0 ${
+          className={`apple-tap px-4 py-2 rounded-xl text-xs font-semibold transition shrink-0 flex items-center gap-1.5 ${
             activeTab === 'pending'
               ? 'bg-white text-slate-900 shadow-[0_2px_8px_rgba(0,0,0,0.08)]'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          Pending ({pendingStudents.length})
+          <span>Pending Approvals</span>
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+            (pendingUsers.length + pendingEnrollments.length) > 0
+              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+              : 'bg-slate-100 text-slate-500'
+          }`}>
+            {pendingUsers.length + pendingEnrollments.length}
+          </span>
         </button>
 
         <button
@@ -316,97 +360,211 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         </button>
       </div>
 
-      {/* TAB 1: PENDING APPROVALS */}
+      {/* TAB 1: PENDING APPROVALS (User Registrations + Subject Enrollment Requests) */}
       {activeTab === 'pending' && (
-        <div className="apple-glass rounded-3xl p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-sm text-slate-900">
-              Pending Registrations
-            </h3>
+        <div className="space-y-6">
+          {/* SECTION 1: USER REGISTRATIONS (Students & Faculty) */}
+          <div className="apple-glass rounded-3xl p-6 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-sm text-slate-900">
+                  Account Registration Requests ({pendingUsers.length})
+                </h3>
+                <p className="text-xs text-slate-500">
+                  New student and faculty registrations awaiting Administrator verification
+                </p>
+              </div>
 
-            {pendingStudents.length > 0 && (
-              <button
-                onClick={handleApproveAll}
-                className="apple-tap px-4 py-1.5 rounded-xl bg-[#FF9500] hover:bg-[#e08500] text-slate-950 font-bold text-xs shadow-xs transition"
-              >
-                Approve All
-              </button>
+              {pendingUsers.length > 0 && (
+                <button
+                  onClick={handleApproveAll}
+                  className="apple-tap px-4 py-1.5 rounded-xl bg-[#FF9500] hover:bg-[#e08500] text-slate-950 font-bold text-xs shadow-xs transition"
+                >
+                  Approve All Accounts
+                </button>
+              )}
+            </div>
+
+            {pendingUsers.length === 0 ? (
+              <div className="text-center py-8 px-4 space-y-2 bg-white/40 rounded-2xl border border-slate-100">
+                <CheckCircle2 className="w-8 h-8 text-[#34C759] mx-auto" />
+                <h4 className="text-xs font-semibold text-slate-700">
+                  No Pending User Registrations
+                </h4>
+                <p className="text-[11px] text-slate-400">
+                  All student and teacher accounts have been verified.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200/60 text-xs">
+                  <thead className="text-slate-500 font-semibold uppercase text-[10px]">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Role</th>
+                      <th className="px-4 py-3 text-left">Full Name</th>
+                      <th className="px-3 py-3 text-left">LRN / ID</th>
+                      <th className="px-4 py-3 text-left">Email Address</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white/50">
+                    {pendingUsers.map((u) => (
+                      <tr key={u.id} className="hover:bg-white/80 transition">
+                        <td className="px-4 py-3">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+                            u.role === 'teacher'
+                              ? 'bg-blue-100 text-blue-900 border border-blue-200'
+                              : 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                          }`}>
+                            {u.role === 'teacher' ? 'Faculty Teacher' : 'Student'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-full overflow-hidden border border-amber-300 bg-white shrink-0 shadow-xs">
+                              {u.avatar ? (
+                                <img src={u.avatar} alt={u.displayName} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full bg-[#0b3b60] text-amber-300 flex items-center justify-center font-bold text-xs">
+                                  {u.displayName.charAt(0)}
+                                </div>
+                              )}
+                            </div>
+                            <span className="font-semibold text-slate-900">{u.displayName}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 font-mono font-medium text-slate-700">
+                          {u.lrn || u.studentNumber || '—'}
+                        </td>
+                        <td className="px-4 py-3 font-mono text-slate-600">
+                          {u.email}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => setEditingUser(u)}
+                              className="apple-tap px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 font-medium text-xs transition"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleApprove(u)}
+                              className="apple-tap px-3 py-1.5 rounded-lg bg-[#34C759] hover:bg-emerald-600 text-white font-semibold text-xs shadow-xs transition"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => handleReject(u)}
+                              className="apple-tap px-2 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 font-medium text-xs transition"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
 
-          {pendingStudents.length === 0 ? (
-            <div className="text-center py-12 px-4 space-y-2">
-              <CheckCircle2 className="w-10 h-10 text-[#34C759] mx-auto" />
-              <h4 className="text-sm font-semibold text-slate-900">
-                No Pending Registrations
-              </h4>
+          {/* SECTION 2: SUBJECT ENROLLMENT REQUESTS */}
+          <div className="apple-glass rounded-3xl p-6 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-sm text-slate-900">
+                  Subject Enrollment Requests ({pendingEnrollments.length})
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Learners who entered class codes to join specific subjects across all departments
+                </p>
+              </div>
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200/60 text-xs">
-                <thead className="text-slate-500 font-semibold uppercase text-[10px]">
-                  <tr>
-                    <th className="px-4 py-3 text-left">Learner Name</th>
-                    <th className="px-3 py-3 text-left">LRN</th>
-                    <th className="px-4 py-3 text-left">Email Address</th>
-                    <th className="px-3 py-3 text-left">Class Code</th>
-                    <th className="px-4 py-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white/50">
-                  {pendingStudents.map((st) => (
-                    <tr key={st.id} className="hover:bg-white/80 transition">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-full overflow-hidden border border-amber-300 bg-white shrink-0">
-                            {st.avatar ? (
-                              <img src={st.avatar} alt={st.displayName} className="w-full h-full object-cover" />
-                            ) : (
-                              <div className="w-full h-full bg-[#0b3b60] text-amber-300 flex items-center justify-center font-bold text-xs">
-                                {st.displayName.charAt(0)}
-                              </div>
-                            )}
-                          </div>
-                          <span className="font-semibold text-slate-900">{st.displayName}</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 font-mono font-medium text-slate-700">
-                        {st.lrn || '—'}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-slate-600">
-                        {st.email}
-                      </td>
-                      <td className="px-3 py-3 font-mono font-semibold text-[#007AFF]">
-                        {st.classCode || 'SKI-10A'}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => setEditingUser(st)}
-                            className="apple-tap px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 font-medium text-xs transition"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleApprove(st)}
-                            className="apple-tap px-3 py-1.5 rounded-lg bg-[#34C759] hover:bg-emerald-600 text-white font-semibold text-xs shadow-xs transition"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => handleReject(st)}
-                            className="apple-tap px-2 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 font-medium text-xs transition"
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      </td>
+
+            {pendingEnrollments.length === 0 ? (
+              <div className="text-center py-8 px-4 space-y-2 bg-white/40 rounded-2xl border border-slate-100">
+                <CheckCircle2 className="w-8 h-8 text-[#34C759] mx-auto" />
+                <h4 className="text-xs font-semibold text-slate-700">
+                  No Pending Subject Enrollment Requests
+                </h4>
+                <p className="text-[11px] text-slate-400">
+                  All subject join requests have been processed.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200/60 text-xs">
+                  <thead className="text-slate-500 font-semibold uppercase text-[10px]">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Learner</th>
+                      <th className="px-3 py-3 text-left">LRN</th>
+                      <th className="px-4 py-3 text-left">Subject & Section</th>
+                      <th className="px-3 py-3 text-left">Class Code</th>
+                      <th className="px-3 py-3 text-left">Assigned Teacher</th>
+                      <th className="px-3 py-3 text-left">Requested</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white/50">
+                    {pendingEnrollments.map((enr) => (
+                      <tr key={enr.id} className="hover:bg-white/80 transition">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-full overflow-hidden border border-amber-300 bg-white shrink-0 shadow-xs">
+                              {enr.avatar ? (
+                                <img src={enr.avatar} alt={enr.studentName} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full bg-[#0b3b60] text-amber-300 flex items-center justify-center font-bold text-xs">
+                                  {enr.studentName.charAt(0)}
+                                </div>
+                              )}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-slate-900">{enr.studentName}</div>
+                              <div className="text-[10px] text-slate-400 font-mono">{enr.studentEmail}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 font-mono font-medium text-slate-700">
+                          {enr.lrn || '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-bold text-[#0b3b60]">{enr.subjectName}</div>
+                          <div className="text-[10px] text-slate-400">{enr.section} • {enr.term || 'Term 1'}</div>
+                        </td>
+                        <td className="px-3 py-3 font-mono font-bold text-[#007AFF]">
+                          {enr.classCode}
+                        </td>
+                        <td className="px-3 py-3 font-medium text-slate-700">
+                          {enr.teacherName || 'Assigned Faculty'}
+                        </td>
+                        <td className="px-3 py-3 text-slate-500 text-[11px]">
+                          {new Date(enr.requestedAt).toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => handleApproveEnrollment(enr)}
+                              className="apple-tap px-3 py-1.5 rounded-lg bg-[#34C759] hover:bg-emerald-600 text-white font-semibold text-xs shadow-xs transition"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => handleRejectEnrollment(enr.id, enr.studentName)}
+                              className="apple-tap px-2 py-1.5 rounded-lg text-rose-600 hover:bg-rose-50 font-medium text-xs transition"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

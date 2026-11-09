@@ -30,7 +30,13 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
   scoreBoards,
   classes 
 }) => {
-  const { currentUser, updateUserAvatar, enrollInSubject, unenrollSubject } = useAuth();
+  const { 
+    currentUser, 
+    updateUserAvatar, 
+    enrollInSubject, 
+    unenrollSubject,
+    enrollmentsList 
+  } = useAuth();
   const printAreaRef = useRef<HTMLDivElement>(null);
   const studentPhotoRef = useRef<HTMLInputElement>(null);
 
@@ -53,7 +59,27 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
     });
   }, [scoreBoards, currentUser]);
 
-  // Combined enrolled subjects list (like Google Classroom classes enrolled)
+  // Pending enrollment requests for current student
+  const myPendingEnrollments = useMemo(() => {
+    if (!currentUser) return [];
+    return enrollmentsList.filter((e) => {
+      const matchId = e.studentId === currentUser.id;
+      const matchEmail = currentUser.email && e.studentEmail && e.studentEmail.toLowerCase() === currentUser.email.toLowerCase();
+      return (matchId || matchEmail) && e.status === 'pending';
+    });
+  }, [enrollmentsList, currentUser]);
+
+  // Rejected enrollment requests for current student
+  const myRejectedEnrollments = useMemo(() => {
+    if (!currentUser) return [];
+    return enrollmentsList.filter((e) => {
+      const matchId = e.studentId === currentUser.id;
+      const matchEmail = currentUser.email && e.studentEmail && e.studentEmail.toLowerCase() === currentUser.email.toLowerCase();
+      return (matchId || matchEmail) && e.status === 'rejected';
+    });
+  }, [enrollmentsList, currentUser]);
+
+  // Combined approved enrolled subjects list (like Google Classroom classes enrolled)
   const enrolledSubjects = useMemo(() => {
     const list: {
       classCode: string;
@@ -66,10 +92,42 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
     }[] = [];
     const seen = new Set<string>();
 
-    // 1. From currentUser.enrolledClassCodes
+    const isPendingOrRejected = (code: string) => {
+      const norm = code.trim().toUpperCase();
+      return (
+        myPendingEnrollments.some((e) => e.classCode.toUpperCase() === norm) ||
+        myRejectedEnrollments.some((e) => e.classCode.toUpperCase() === norm)
+      );
+    };
+
+    // 1. From approved enrollments in Firestore
+    enrollmentsList
+      .filter((e) => {
+        const matchId = e.studentId === currentUser?.id;
+        const matchEmail = currentUser?.email && e.studentEmail && e.studentEmail.toLowerCase() === currentUser.email.toLowerCase();
+        return (matchId || matchEmail) && e.status === 'approved';
+      })
+      .forEach((enr) => {
+        const norm = enr.classCode.trim().toUpperCase();
+        if (!seen.has(norm)) {
+          seen.add(norm);
+          const cls = classes.find((c) => c.classCode.toUpperCase() === norm);
+          list.push({
+            classCode: norm,
+            subjectName: cls?.subjectName || enr.subjectName || 'Enrolled Subject',
+            section: cls?.section || enr.section || 'Regular Section',
+            teacherName: cls?.teacherName || enr.teacherName || 'Assigned Faculty',
+            term: cls?.term || enr.term || 'Term 1',
+            schedule: cls?.schedule,
+            room: cls?.room,
+          });
+        }
+      });
+
+    // 2. From currentUser.enrolledClassCodes (if approved)
     (currentUser?.enrolledClassCodes || []).forEach((code) => {
       const norm = code.trim().toUpperCase();
-      if (!seen.has(norm)) {
+      if (!seen.has(norm) && !isPendingOrRejected(norm)) {
         seen.add(norm);
         const cls = classes.find((c) => c.classCode.toUpperCase() === norm);
         list.push({
@@ -84,10 +142,10 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
       }
     });
 
-    // 2. From student's own scoreboards in Firestore
+    // 3. From student's own scoreboards in Firestore (if not pending)
     myScoreBoards.forEach((sb) => {
       const norm = sb.classCode.trim().toUpperCase();
-      if (!seen.has(norm)) {
+      if (!seen.has(norm) && !isPendingOrRejected(norm)) {
         seen.add(norm);
         const cls = classes.find((c) => c.classCode.toUpperCase() === norm);
         list.push({
@@ -102,26 +160,8 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
       }
     });
 
-    // 3. From legacy currentUser.classCode if present
-    if (currentUser?.classCode) {
-      const norm = currentUser.classCode.trim().toUpperCase();
-      if (!seen.has(norm)) {
-        seen.add(norm);
-        const cls = classes.find((c) => c.classCode.toUpperCase() === norm);
-        list.push({
-          classCode: norm,
-          subjectName: cls?.subjectName || 'Enrolled Subject',
-          section: cls?.section || 'Regular Section',
-          teacherName: cls?.teacherName || 'Assigned Faculty',
-          term: cls?.term || 'Term 1',
-          schedule: cls?.schedule,
-          room: cls?.room,
-        });
-      }
-    }
-
     return list;
-  }, [classes, myScoreBoards, currentUser]);
+  }, [classes, myScoreBoards, currentUser, enrollmentsList, myPendingEnrollments, myRejectedEnrollments]);
 
   // Selected class code state
   const [selectedClassCode, setSelectedClassCode] = useState<string>(
@@ -408,6 +448,59 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
           </div>
         ) : null}
       </div>
+
+      {/* Pending Subject Enrollment Requests Section */}
+      {myPendingEnrollments.length > 0 && (
+        <div className="bg-amber-50/90 backdrop-blur-xl p-4 sm:p-5 rounded-3xl border border-amber-200 shadow-sm space-y-3 animate-in fade-in">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+              </span>
+              <h3 className="font-bold text-xs sm:text-sm text-amber-950">
+                Subject Enrollment Requests Under Review ({myPendingEnrollments.length})
+              </h3>
+            </div>
+            <span className="text-[11px] text-amber-700/80 font-medium hidden sm:inline">
+              Awaiting Teacher or Admin Approval
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {myPendingEnrollments.map((enr) => (
+              <div
+                key={enr.id}
+                className="bg-white/90 p-3 rounded-2xl border border-amber-200/80 flex items-center justify-between gap-3 shadow-xs"
+              >
+                <div className="min-w-0">
+                  <div className="font-bold text-xs text-[#0b3b60] truncate">
+                    {enr.subjectName}
+                  </div>
+                  <div className="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5">
+                    <span className="font-mono font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
+                      {enr.classCode}
+                    </span>
+                    <span className="truncate">Teacher: {enr.teacherName || 'Faculty'}</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={async () => {
+                    if (window.confirm(`Withdraw enrollment request for ${enr.subjectName} (${enr.classCode})?`)) {
+                      await unenrollSubject(enr.classCode);
+                    }
+                  }}
+                  className="apple-tap text-[10px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-2.5 py-1 rounded-xl transition shrink-0"
+                  title="Cancel Request"
+                >
+                  Withdraw
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Case 1: Student has 0 enrolled subjects (Empty State Card) */}
       {enrolledSubjects.length === 0 ? (

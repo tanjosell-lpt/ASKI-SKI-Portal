@@ -43,6 +43,11 @@ service cloud.firestore {
       allow write: if true;
     }
 
+    match /subjectEnrollments/{enrollmentId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     // Retain legacy paths for backwards compatibility
     match /scores/{scoreId} {
       allow read, write: if true;

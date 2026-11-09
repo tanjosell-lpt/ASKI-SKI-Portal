@@ -32,6 +32,27 @@ const BROADCASTS_COL = 'broadcasts';
 const NOTIFICATIONS_COL = 'notifications';
 const ENROLLMENTS_COL = 'subjectEnrollments';
 
+/**
+ * Recursively strips undefined fields so Firestore setDoc / updateDoc never throws Unsupported field value: undefined.
+ */
+export function cleanFirestoreData<T extends Record<string, any>>(obj: T): any {
+  if (obj === null || obj === undefined) return null;
+  if (Array.isArray(obj)) {
+    return obj.map((item) => (typeof item === 'object' && item !== null ? cleanFirestoreData(item) : item));
+  }
+  const cleaned: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+        cleaned[key] = cleanFirestoreData(value);
+      } else {
+        cleaned[key] = value;
+      }
+    }
+  }
+  return cleaned;
+}
+
 // --- Users (Auth / Directory / Approvals) ---
 export function subscribeToUsers(
   onData: (users: UserAccount[]) => void,
@@ -60,7 +81,8 @@ export function subscribeToUsers(
 export async function saveUserAccount(user: UserAccount): Promise<void> {
   try {
     const docRef = doc(db, USERS_COL, user.id);
-    await setDoc(docRef, user, { merge: true });
+    const cleaned = cleanFirestoreData(user);
+    await setDoc(docRef, cleaned, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${USERS_COL}/${user.id}`);
   }
@@ -112,7 +134,8 @@ export function subscribeToClasses(
 export async function saveClassSubject(classObj: ClassSubject): Promise<void> {
   try {
     const docRef = doc(db, CLASSES_COL, classObj.id);
-    await setDoc(docRef, classObj, { merge: true });
+    const cleaned = cleanFirestoreData(classObj);
+    await setDoc(docRef, cleaned, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${CLASSES_COL}/${classObj.id}`);
   }
@@ -155,7 +178,8 @@ export function subscribeToScoreBoards(
 export async function saveScoreBoard(scoreBoard: StudentScoreBoard): Promise<void> {
   try {
     const docRef = doc(db, SCOREBOARDS_COL, scoreBoard.id);
-    await setDoc(docRef, scoreBoard, { merge: true });
+    const cleaned = cleanFirestoreData(scoreBoard);
+    await setDoc(docRef, cleaned, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${SCOREBOARDS_COL}/${scoreBoard.id}`);
   }
@@ -167,7 +191,7 @@ export async function saveBatchScoreBoards(scoreboards: StudentScoreBoard[]): Pr
     const batch = writeBatch(db);
     for (const sb of scoreboards) {
       const docRef = doc(db, SCOREBOARDS_COL, sb.id);
-      batch.set(docRef, sb, { merge: true });
+      batch.set(docRef, cleanFirestoreData(sb), { merge: true });
     }
     await batch.commit();
   } catch (error) {
@@ -212,7 +236,8 @@ export function subscribeToBroadcasts(
 export async function saveBroadcast(broadcast: BroadcastNote): Promise<void> {
   try {
     const docRef = doc(db, BROADCASTS_COL, broadcast.id);
-    await setDoc(docRef, broadcast);
+    const cleaned = cleanFirestoreData(broadcast);
+    await setDoc(docRef, cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${BROADCASTS_COL}/${broadcast.id}`);
   }
@@ -255,7 +280,8 @@ export function subscribeToNotifications(
 export async function addNotification(notification: AppNotification): Promise<void> {
   try {
     const docRef = doc(db, NOTIFICATIONS_COL, notification.id);
-    await setDoc(docRef, notification);
+    const cleaned = cleanFirestoreData(notification);
+    await setDoc(docRef, cleaned);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${NOTIFICATIONS_COL}/${notification.id}`);
   }
@@ -298,7 +324,8 @@ export function subscribeToEnrollments(
 export async function saveSubjectEnrollment(enrollment: SubjectEnrollment): Promise<void> {
   try {
     const docRef = doc(db, ENROLLMENTS_COL, enrollment.id);
-    await setDoc(docRef, enrollment, { merge: true });
+    const cleaned = cleanFirestoreData(enrollment);
+    await setDoc(docRef, cleaned, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${ENROLLMENTS_COL}/${enrollment.id}`);
   }

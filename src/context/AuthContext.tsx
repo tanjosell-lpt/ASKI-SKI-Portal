@@ -61,14 +61,39 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const ADMIN_USERNAME = 'askiskiportal-admin';
 export const ADMIN_PASSWORD = 'adminaskiski2026';
 export const ADMIN_EMAIL = 'tanjosell.lpt@gmail.com';
+const SESSION_STORAGE_KEY = 'aski_portal_session_user';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Students and users land directly on the portal login screen when entering the link
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
+  // Session persistence: Students and staff remain logged in across page refreshes
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
+    try {
+      const saved = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.warn('Failed to restore session from localStorage', e);
+    }
+    return null;
+  });
+
   const [usersList, setUsersList] = useState<UserAccount[]>([]);
   const [enrollmentsList, setEnrollmentsList] = useState<SubjectEnrollment[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [otpRequests, setOtpRequests] = useState<{ [identifier: string]: { code: string; expiresAt: number } }>({});
+
+  // Synchronize localStorage with currentUser state
+  useEffect(() => {
+    try {
+      if (currentUser) {
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(currentUser));
+      } else {
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+      }
+    } catch (e) {
+      console.warn('Failed to sync session with localStorage', e);
+    }
+  }, [currentUser]);
 
   // Sync enrollments list from Firestore
   useEffect(() => {
@@ -86,50 +111,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Sync users list from Firestore with automatic admin healing
   useEffect(() => {
     const unsub = subscribeToUsers((liveUsers) => {
-      if (liveUsers.length > 0) {
-        // Auto-heal admin if accidentally saved as student
-        const sanitized = liveUsers.map((u) => {
-          if (u.email && u.email.toLowerCase() === ADMIN_EMAIL) {
-            if (u.role !== 'admin' || u.status !== 'approved') {
-              const healed: UserAccount = {
-                ...u,
-                role: 'admin',
-                status: 'approved',
-                displayName: u.displayName || 'Portal Administrator',
-              };
-              saveUserAccount(healed).catch(console.warn);
-              return healed;
-            }
+      // Auto-heal admin if accidentally saved as student
+      const sanitized = liveUsers.map((u) => {
+        if (u.email && u.email.toLowerCase() === ADMIN_EMAIL) {
+          if (u.role !== 'admin' || u.status !== 'approved') {
+            const healed: UserAccount = {
+              ...u,
+              role: 'admin',
+              status: 'approved',
+              displayName: u.displayName || 'Portal Administrator',
+            };
+            saveUserAccount(healed).catch(console.warn);
+            return healed;
           }
-          return u;
-        });
-
-        // Ensure admin is present in list
-        const hasAdmin = sanitized.some((u) => u.email?.toLowerCase() === ADMIN_EMAIL);
-        if (!hasAdmin) {
-          sanitized.unshift({
-            id: 'user-admin-1',
-            firstName: 'Portal',
-            middleName: 'System',
-            lastName: 'Admin',
-            displayName: 'Portal Administrator',
-            email: ADMIN_EMAIL,
-            role: 'admin',
-            status: 'approved',
-            createdAt: new Date().toISOString(),
-          });
         }
+        return u;
+      });
 
-        setUsersList(sanitized);
+      // Ensure admin is always present in list
+      const hasAdmin = sanitized.some((u) => u.email?.toLowerCase() === ADMIN_EMAIL);
+      if (!hasAdmin) {
+        sanitized.unshift({
+          id: 'user-admin-1',
+          firstName: 'Portal',
+          middleName: 'System',
+          lastName: 'Admin',
+          displayName: 'Portal Administrator',
+          email: ADMIN_EMAIL,
+          role: 'admin',
+          status: 'approved',
+          createdAt: new Date().toISOString(),
+        });
+      }
 
-        // If current user is in list, sync updates
-        if (currentUser) {
-          const updated = sanitized.find((u) => u.id === currentUser.id || u.email?.toLowerCase() === currentUser.email?.toLowerCase());
-          if (updated) {
-            setCurrentUser(updated);
-          }
+      setUsersList(sanitized);
+
+      // Keep active user synchronized with latest Firestore document (e.g. status changes from pending to approved)
+      const activeUserId = currentUser?.id || (() => {
+        try {
+          const saved = localStorage.getItem(SESSION_STORAGE_KEY);
+          return saved ? JSON.parse(saved).id : null;
+        } catch {
+          return null;
+        }
+      })();
+
+      if (activeUserId) {
+        const updated = sanitized.find((u) => u.id === activeUserId);
+        if (updated) {
+          setCurrentUser(updated);
         }
       }
+
       setLoading(false);
     });
 
@@ -229,7 +262,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     if (found.status === 'pending') {
-      setCurrentUser(found);
       return { 
         success: false, 
         message: found.role === 'teacher'
@@ -456,11 +488,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       }
 
-      setCurrentUser(newUser);
+      // Immediately register in in-memory state so it appears in Admin Portal in real time
+      setUsersList((prev) => [newUser, ...prev.filter((u) => u.id !== newUser.id && u.email?.toLowerCase() !== newUser.email.toLowerCase())]);
+
+      // Only auto-login if account is approved admin
+      if (isAdminEmail) {
+        setCurrentUser(newUser);
+      }
       return { success: true, user: newUser };
     } catch (err: any) {
       console.error('Sign up error:', err);
-      setCurrentUser(newUser);
+      // Still update in memory if network fails
+      setUsersList((prev) => [newUser, ...prev.filter((u) => u.id !== newUser.id && u.email?.toLowerCase() !== newUser.email.toLowerCase())]);
       return { success: true, user: newUser };
     }
   };
@@ -733,9 +772,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: new Date().toISOString(),
       });
 
+      // Immediately register in in-memory state so it appears in Admin Portal in real time
+      setUsersList((prev) => [newTeacher, ...prev.filter((u) => u.id !== newTeacher.id && u.email?.toLowerCase() !== newTeacher.email.toLowerCase())]);
+
       return { success: true, user: newTeacher };
     } catch (err: any) {
       console.error('Teacher sign up error:', err);
+      setUsersList((prev) => [newTeacher, ...prev.filter((u) => u.id !== newTeacher.id && u.email?.toLowerCase() !== newTeacher.email.toLowerCase())]);
       return { success: true, user: newTeacher };
     }
   };
@@ -836,6 +879,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = () => {
+    try {
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch (e) {
+      console.warn('Failed to remove session user', e);
+    }
     signOut(auth).catch(() => {});
     setCurrentUser(null);
   };

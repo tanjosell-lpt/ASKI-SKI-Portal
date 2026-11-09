@@ -35,7 +35,8 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
     updateUserAvatar, 
     enrollInSubject, 
     unenrollSubject,
-    enrollmentsList 
+    enrollmentsList,
+    logout 
   } = useAuth();
   const printAreaRef = useRef<HTMLDivElement>(null);
   const studentPhotoRef = useRef<HTMLInputElement>(null);
@@ -314,6 +315,15 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
           <p className="text-[11px] text-slate-400">
             Once an administrator accepts your account, you will be able to enroll in all your subjects using each teacher's class code.
           </p>
+
+          <div className="pt-2 flex justify-center">
+            <button
+              onClick={logout}
+              className="apple-tap inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition"
+            >
+              <span>Sign Out / Switch Account</span>
+            </button>
+          </div>
         </div>
       </div>
     );

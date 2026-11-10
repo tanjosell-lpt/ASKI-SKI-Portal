@@ -96,7 +96,6 @@ export const Header: React.FC<HeaderProps> = ({ notifications }) => {
                         <button
                           onClick={async () => {
                             if (window.confirm('Clear all notifications?')) {
-                              window.dispatchEvent(new CustomEvent('clear-local-notifications', { detail: { userId: currentUser?.id, role } }));
                               await clearAllNotifications(currentUser?.id, role || undefined);
                             }
                           }}

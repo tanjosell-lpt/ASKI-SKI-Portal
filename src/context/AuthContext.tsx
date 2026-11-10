@@ -57,22 +57,12 @@ interface AuthContextType {
   loading: boolean;
 }
 
-import { 
-  INITIAL_CLASSES, 
-  INITIAL_USERS, 
-  INITIAL_SCOREBOARDS, 
-  INITIAL_BROADCASTS, 
-  INITIAL_NOTIFICATIONS 
-} from '../data/mockData';
-
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const ADMIN_USERNAME = 'askiskiportal-admin';
 export const ADMIN_PASSWORD = 'adminaskiski2026';
 export const ADMIN_EMAIL = 'tanjosell.lpt@gmail.com';
 const SESSION_STORAGE_KEY = 'aski_portal_session_user';
-const USERS_CACHE_KEY = 'aski_portal_users_cache';
-const ENROLLMENTS_CACHE_KEY = 'aski_portal_enrollments_cache';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Session persistence: Students and staff remain logged in across page refreshes
@@ -88,53 +78,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return null;
   });
 
-  const [usersList, setUsersList] = useState<UserAccount[]>(() => {
-    try {
-      const saved = localStorage.getItem(USERS_CACHE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {
-      console.warn('Failed to load users cache', e);
-    }
-    return INITIAL_USERS;
-  });
-
-  const [enrollmentsList, setEnrollmentsList] = useState<SubjectEnrollment[]>(() => {
-    try {
-      const saved = localStorage.getItem(ENROLLMENTS_CACHE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch (e) {
-      console.warn('Failed to load enrollments cache', e);
-    }
-    return [];
-  });
-
+  const [usersList, setUsersList] = useState<UserAccount[]>([]);
+  const [enrollmentsList, setEnrollmentsList] = useState<SubjectEnrollment[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [otpRequests, setOtpRequests] = useState<{ [identifier: string]: { code: string; expiresAt: number } }>({});
-
-  // Sync usersList and enrollmentsList to localStorage cache
-  useEffect(() => {
-    try {
-      if (usersList.length > 0) {
-        localStorage.setItem(USERS_CACHE_KEY, JSON.stringify(usersList));
-      }
-    } catch (e) {
-      console.warn('Failed to cache users', e);
-    }
-  }, [usersList]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(ENROLLMENTS_CACHE_KEY, JSON.stringify(enrollmentsList));
-    } catch (e) {
-      console.warn('Failed to cache enrollments', e);
-    }
-  }, [enrollmentsList]);
 
   // Synchronize localStorage with currentUser state
   useEffect(() => {
@@ -464,15 +411,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }): Promise<{ success: boolean; message?: string; user?: UserAccount }> => {
     const email = params.email.toLowerCase().trim();
     const isAdminEmail = email === ADMIN_EMAIL;
-
-    // Check if email already exists in system
-    const existingEmailUser = usersList.find((u) => u.email && u.email.toLowerCase() === email);
-    if (existingEmailUser) {
-      return {
-        success: false,
-        message: 'This email address is already registered to another account. Please sign in or use a different email.',
-      };
-    }
     const displayName = `${params.firstName.trim()} ${params.middleName ? params.middleName.trim() + ' ' : ''}${params.lastName.trim()}`;
 
     const rawCode = (params.classCode || '').trim().toUpperCase();
@@ -782,42 +720,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const updatedUser: UserAccount = {
       ...currentUser,
-      classCode: nextEnrolled[0] || '',
+      classCode: nextEnrolled[0] || undefined,
       enrolledClassCodes: nextEnrolled,
     };
 
     try {
-      // 1. Delete all matching enrollments for this student & class code
-      const matchingEnrollments = enrollmentsList.filter(
-        (e) => (e.studentId === currentUser.id || (e.studentEmail && e.studentEmail.toLowerCase() === currentUser.email?.toLowerCase())) &&
-               (e.classCode || '').trim().toUpperCase() === code
-      );
-
-      const defaultEnrollmentId = `enr-${currentUser.id}-${code.toLowerCase()}`;
-      await deleteSubjectEnrollment(defaultEnrollmentId).catch(() => {});
-      for (const e of matchingEnrollments) {
-        if (e.id !== defaultEnrollmentId) {
-          await deleteSubjectEnrollment(e.id).catch(() => {});
-        }
-      }
-
-      // 2. Delete matching scoreboards
+      const enrollmentId = `enr-${currentUser.id}-${code.toLowerCase()}`;
       const scoreBoardId = `sb-${currentUser.id}-${code.toLowerCase()}`;
+      await deleteSubjectEnrollment(enrollmentId);
       await deleteScoreBoard(scoreBoardId).catch(() => {});
-
-      // 3. Update local and remote user account
       await saveUserAccount(updatedUser);
       setCurrentUser(updatedUser);
       setUsersList((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
-      setEnrollmentsList((prev) =>
-        prev.filter(
-          (e) =>
-            !((e.studentId === currentUser.id || e.studentEmail === currentUser.email) && (e.classCode || '').trim().toUpperCase() === code)
-        )
-      );
-      return { success: true, message: `Successfully unenrolled from ${code}.` };
+      return { success: true, message: `Unenrolled from class ${code}.` };
     } catch (err) {
-      console.error('unenrollSubject error:', err);
       return { success: false, message: 'Failed to unenroll.' };
     }
   };

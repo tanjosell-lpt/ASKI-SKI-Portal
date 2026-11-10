@@ -106,6 +106,121 @@ export async function deleteUserAccount(userId: string): Promise<void> {
   }
 }
 
+/**
+ * Permanently deletes a student learner and unenrolls them from all subjects and removes their scoreboards.
+ */
+export async function deleteStudentCascading(studentId: string, studentEmail?: string): Promise<void> {
+  try {
+    // 1. Delete user account document
+    await deleteDoc(doc(db, USERS_COL, studentId));
+
+    // 2. Unenroll from all subjects (delete matching subjectEnrollments)
+    const enrollmentsSnap = await getDocs(collection(db, ENROLLMENTS_COL));
+    for (const d of enrollmentsSnap.docs) {
+      const data = d.data() as SubjectEnrollment;
+      const matchId = data.studentId === studentId;
+      const matchEmail = studentEmail && data.studentEmail && data.studentEmail.toLowerCase() === studentEmail.toLowerCase();
+      if (matchId || matchEmail) {
+        await deleteDoc(doc(db, ENROLLMENTS_COL, d.id));
+      }
+    }
+
+    // 3. Delete all student scoreboards
+    const scoreboardsSnap = await getDocs(collection(db, SCOREBOARDS_COL));
+    for (const d of scoreboardsSnap.docs) {
+      const data = d.data() as StudentScoreBoard;
+      const matchId = data.studentId === studentId;
+      const matchEmail = studentEmail && data.studentEmail && data.studentEmail.toLowerCase() === studentEmail.toLowerCase();
+      if (matchId || matchEmail) {
+        await deleteDoc(doc(db, SCOREBOARDS_COL, d.id));
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `${USERS_COL}/${studentId}`);
+  }
+}
+
+/**
+ * Permanently deletes a faculty teacher, revokes access, and unenrolls all students from their classes.
+ */
+export async function deleteTeacherCascading(
+  teacherId: string, 
+  teacherName?: string, 
+  teacherEmail?: string
+): Promise<void> {
+  try {
+    // 1. Delete teacher user account document
+    await deleteDoc(doc(db, USERS_COL, teacherId));
+
+    // 2. Find all classes/subjects taught by this teacher
+    const classesSnap = await getDocs(collection(db, CLASSES_COL));
+    const teacherClasses: ClassSubject[] = [];
+    for (const d of classesSnap.docs) {
+      const c = { id: d.id, ...d.data() } as ClassSubject;
+      const matchId = c.teacherId && c.teacherId === teacherId;
+      const matchName = teacherName && c.teacherName && c.teacherName.toLowerCase().trim() === teacherName.toLowerCase().trim();
+      if (matchId || matchName) {
+        teacherClasses.push(c);
+      }
+    }
+
+    const teacherClassCodes = teacherClasses.map((c) => c.classCode.toUpperCase());
+
+    // 3. Unenroll all students from these subjects (delete subjectEnrollments)
+    if (teacherClassCodes.length > 0 || teacherId) {
+      const enrollmentsSnap = await getDocs(collection(db, ENROLLMENTS_COL));
+      for (const d of enrollmentsSnap.docs) {
+        const enr = d.data() as SubjectEnrollment;
+        const matchCode = teacherClassCodes.includes((enr.classCode || '').toUpperCase());
+        const matchTeacherId = enr.teacherId === teacherId;
+        if (matchCode || matchTeacherId) {
+          await deleteDoc(doc(db, ENROLLMENTS_COL, d.id));
+        }
+      }
+
+      // 4. Update student users to remove these class codes from enrolledClassCodes
+      const usersSnap = await getDocs(collection(db, USERS_COL));
+      for (const d of usersSnap.docs) {
+        const user = { id: d.id, ...d.data() } as UserAccount;
+        if (user.role === 'student' && user.enrolledClassCodes && user.enrolledClassCodes.length > 0) {
+          const filtered = user.enrolledClassCodes.filter((code) => !teacherClassCodes.includes(code.toUpperCase()));
+          if (filtered.length !== user.enrolledClassCodes.length) {
+            await updateDoc(doc(db, USERS_COL, user.id), {
+              enrolledClassCodes: filtered,
+              classCode: filtered[0] || '',
+            });
+          }
+        }
+      }
+
+      // 5. Delete all scoreboards for these teacher's classes
+      const scoreboardsSnap = await getDocs(collection(db, SCOREBOARDS_COL));
+      for (const d of scoreboardsSnap.docs) {
+        const sb = d.data() as StudentScoreBoard;
+        if (teacherClassCodes.includes((sb.classCode || '').toUpperCase())) {
+          await deleteDoc(doc(db, SCOREBOARDS_COL, d.id));
+        }
+      }
+
+      // 6. Delete broadcast notes for these classes
+      const broadcastsSnap = await getDocs(collection(db, BROADCASTS_COL));
+      for (const d of broadcastsSnap.docs) {
+        const b = d.data() as BroadcastNote;
+        if (teacherClassCodes.includes((b.classCode || '').toUpperCase())) {
+          await deleteDoc(doc(db, BROADCASTS_COL, d.id));
+        }
+      }
+
+      // 7. Delete the classes themselves
+      for (const c of teacherClasses) {
+        await deleteDoc(doc(db, CLASSES_COL, c.id));
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `${USERS_COL}/${teacherId}`);
+  }
+}
+
 // --- Classes / Subjects ---
 export function subscribeToClasses(
   onData: (classes: ClassSubject[]) => void,
@@ -141,10 +256,56 @@ export async function saveClassSubject(classObj: ClassSubject): Promise<void> {
   }
 }
 
-export async function deleteClassSubject(classId: string): Promise<void> {
+export async function deleteClassSubject(classId: string, classCode?: string): Promise<void> {
   try {
     const docRef = doc(db, CLASSES_COL, classId);
     await deleteDoc(docRef);
+
+    if (classCode) {
+      const normCode = classCode.trim().toUpperCase();
+
+      // 1. Delete all subject enrollments for this class
+      const enrollmentsSnap = await getDocs(collection(db, ENROLLMENTS_COL));
+      for (const d of enrollmentsSnap.docs) {
+        const enr = d.data() as SubjectEnrollment;
+        if ((enr.classCode || '').trim().toUpperCase() === normCode) {
+          await deleteDoc(doc(db, ENROLLMENTS_COL, d.id));
+        }
+      }
+
+      // 2. Unenroll all students whose enrolledClassCodes has this classCode
+      const usersSnap = await getDocs(collection(db, USERS_COL));
+      for (const d of usersSnap.docs) {
+        const user = { id: d.id, ...d.data() } as UserAccount;
+        if (user.role === 'student' && user.enrolledClassCodes && user.enrolledClassCodes.length > 0) {
+          const filtered = user.enrolledClassCodes.filter((c) => c.trim().toUpperCase() !== normCode);
+          if (filtered.length !== user.enrolledClassCodes.length) {
+            await updateDoc(doc(db, USERS_COL, user.id), {
+              enrolledClassCodes: filtered,
+              classCode: filtered[0] || '',
+            });
+          }
+        }
+      }
+
+      // 3. Delete scoreboards for this class
+      const scoreboardsSnap = await getDocs(collection(db, SCOREBOARDS_COL));
+      for (const d of scoreboardsSnap.docs) {
+        const sb = d.data() as StudentScoreBoard;
+        if ((sb.classCode || '').trim().toUpperCase() === normCode) {
+          await deleteDoc(doc(db, SCOREBOARDS_COL, d.id));
+        }
+      }
+
+      // 4. Delete broadcasts for this class
+      const broadcastsSnap = await getDocs(collection(db, BROADCASTS_COL));
+      for (const d of broadcastsSnap.docs) {
+        const b = d.data() as BroadcastNote;
+        if ((b.classCode || '').trim().toUpperCase() === normCode) {
+          await deleteDoc(doc(db, BROADCASTS_COL, d.id));
+        }
+      }
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `${CLASSES_COL}/${classId}`);
   }

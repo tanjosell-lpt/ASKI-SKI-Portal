@@ -9,6 +9,7 @@ import {
   deleteUserAccount, 
   ensureAdminAccount,
   saveScoreBoard,
+  deleteScoreBoard,
   subscribeToEnrollments,
   saveSubjectEnrollment,
   updateEnrollmentStatus,
@@ -725,7 +726,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       const enrollmentId = `enr-${currentUser.id}-${code.toLowerCase()}`;
+      const scoreBoardId = `sb-${currentUser.id}-${code.toLowerCase()}`;
       await deleteSubjectEnrollment(enrollmentId);
+      await deleteScoreBoard(scoreBoardId).catch(() => {});
       await saveUserAccount(updatedUser);
       setCurrentUser(updatedUser);
       setUsersList((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));

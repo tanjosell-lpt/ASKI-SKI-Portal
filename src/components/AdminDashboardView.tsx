@@ -58,7 +58,8 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     ensureAdminRestored, 
     enrollmentsList, 
     approveSubjectEnrollment, 
-    rejectSubjectEnrollment 
+    rejectSubjectEnrollment,
+    deleteUser 
   } = useAuth();
   const [activeTab, setActiveTab] = useState<'pending' | 'students' | 'teachers' | 'classes' | 'scoreboards'>('pending');
   const [searchQuery, setSearchQuery] = useState('');
@@ -144,17 +145,22 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   };
 
   const handleDeleteUser = async (user: UserAccount) => {
-    if (window.confirm(`Permanently delete account for ${user.displayName}?`)) {
-      await deleteUserAccount(user.id);
-      setActionSuccess(`Account for ${user.displayName} deleted`);
-      setTimeout(() => setActionSuccess(null), 3000);
+    const isTeacher = user.role === 'teacher';
+    const confirmMsg = isTeacher
+      ? `Permanently remove faculty member ${user.displayName}? All assigned subjects will be deleted, enrolled students will be automatically unenrolled from those subjects, and the faculty member will lose portal access immediately.`
+      : `Permanently delete learner account for ${user.displayName}? The student will be unenrolled from all subjects and their score records removed.`;
+
+    if (window.confirm(confirmMsg)) {
+      await deleteUser(user.id);
+      setActionSuccess(`${isTeacher ? 'Faculty member' : 'Learner'} ${user.displayName} removed and unenrolled`);
+      setTimeout(() => setActionSuccess(null), 3500);
     }
   };
 
   const handleDeleteClass = async (cls: ClassSubject) => {
-    if (window.confirm(`Delete class ${cls.subjectName} (${cls.classCode})?`)) {
-      await deleteClassSubject(cls.id);
-      setActionSuccess(`Class ${cls.classCode} deleted`);
+    if (window.confirm(`Delete class ${cls.subjectName} (${cls.classCode})? All enrolled students will be unenrolled and score records removed.`)) {
+      await deleteClassSubject(cls.id, cls.classCode);
+      setActionSuccess(`Class ${cls.classCode} deleted and learners unenrolled`);
       setTimeout(() => setActionSuccess(null), 3000);
     }
   };

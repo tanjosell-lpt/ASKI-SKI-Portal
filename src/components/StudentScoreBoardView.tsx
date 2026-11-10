@@ -101,7 +101,14 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
       );
     };
 
-    // 1. From approved enrollments in Firestore
+    const isExplicitlyUnenrolled = (code: string) => {
+      const norm = code.trim().toUpperCase();
+      const currentEnrolled = currentUser?.enrolledClassCodes || (currentUser?.classCode ? [currentUser.classCode] : []);
+      // If code is not in currentUser.enrolledClassCodes, it has been unenrolled
+      return currentUser && !currentEnrolled.some((c) => c.trim().toUpperCase() === norm);
+    };
+
+    // 1. From approved enrollments in Firestore (only if not explicitly unenrolled)
     enrollmentsList
       .filter((e) => {
         const matchId = e.studentId === currentUser?.id;
@@ -110,7 +117,7 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
       })
       .forEach((enr) => {
         const norm = enr.classCode.trim().toUpperCase();
-        if (!seen.has(norm)) {
+        if (!seen.has(norm) && !isExplicitlyUnenrolled(norm)) {
           seen.add(norm);
           const cls = classes.find((c) => c.classCode.toUpperCase() === norm);
           list.push({
@@ -125,7 +132,7 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
         }
       });
 
-    // 2. From currentUser.enrolledClassCodes (if approved)
+    // 2. From currentUser.enrolledClassCodes (if approved and not pending/rejected)
     (currentUser?.enrolledClassCodes || []).forEach((code) => {
       const norm = code.trim().toUpperCase();
       if (!seen.has(norm) && !isPendingOrRejected(norm)) {

@@ -61,7 +61,7 @@ function AppContent() {
     });
 
     const unsubNotifications = subscribeToNotifications((live) => {
-      if (live.length > 0) setNotifications(live);
+      setNotifications(live);
     });
 
     return () => {

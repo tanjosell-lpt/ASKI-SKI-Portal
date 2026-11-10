@@ -471,11 +471,7 @@ export async function clearAllNotifications(userId?: string, role?: string): Pro
     const snap = await getDocs(collection(db, NOTIFICATIONS_COL));
     const batch = writeBatch(db);
     snap.forEach((d) => {
-      const n = { id: d.id, ...d.data() } as AppNotification;
-      const isMatch = !userId || !role || role === 'admin' || n.recipientId === userId || n.recipientRole === 'all' || n.recipientRole === role;
-      if (isMatch) {
-        batch.delete(doc(db, NOTIFICATIONS_COL, d.id));
-      }
+      batch.delete(doc(db, NOTIFICATIONS_COL, d.id));
     });
     await batch.commit();
   } catch (error) {

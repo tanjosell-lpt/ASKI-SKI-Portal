@@ -91,7 +91,7 @@ export async function saveUserAccount(user: UserAccount): Promise<void> {
 export async function updateUserStatus(userId: string, status: 'approved' | 'rejected'): Promise<void> {
   try {
     const docRef = doc(db, USERS_COL, userId);
-    await updateDoc(docRef, { status });
+    await setDoc(docRef, { status }, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `${USERS_COL}/${userId}`);
   }
@@ -185,10 +185,10 @@ export async function deleteTeacherCascading(
         if (user.role === 'student' && user.enrolledClassCodes && user.enrolledClassCodes.length > 0) {
           const filtered = user.enrolledClassCodes.filter((code) => !teacherClassCodes.includes(code.toUpperCase()));
           if (filtered.length !== user.enrolledClassCodes.length) {
-            await updateDoc(doc(db, USERS_COL, user.id), {
+            await setDoc(doc(db, USERS_COL, user.id), {
               enrolledClassCodes: filtered,
               classCode: filtered[0] || '',
-            });
+            }, { merge: true });
           }
         }
       }
@@ -280,10 +280,10 @@ export async function deleteClassSubject(classId: string, classCode?: string): P
         if (user.role === 'student' && user.enrolledClassCodes && user.enrolledClassCodes.length > 0) {
           const filtered = user.enrolledClassCodes.filter((c) => c.trim().toUpperCase() !== normCode);
           if (filtered.length !== user.enrolledClassCodes.length) {
-            await updateDoc(doc(db, USERS_COL, user.id), {
+            await setDoc(doc(db, USERS_COL, user.id), {
               enrolledClassCodes: filtered,
               classCode: filtered[0] || '',
-            });
+            }, { merge: true });
           }
         }
       }
@@ -451,7 +451,7 @@ export async function addNotification(notification: AppNotification): Promise<vo
 export async function markNotificationAsRead(notificationId: string): Promise<void> {
   try {
     const docRef = doc(db, NOTIFICATIONS_COL, notificationId);
-    await updateDoc(docRef, { read: true });
+    await setDoc(docRef, { read: true }, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `${NOTIFICATIONS_COL}/${notificationId}`);
   }
@@ -470,12 +470,21 @@ export async function clearAllNotifications(userId?: string, role?: string): Pro
   try {
     const snap = await getDocs(collection(db, NOTIFICATIONS_COL));
     const batch = writeBatch(db);
+    let count = 0;
     snap.forEach((d) => {
-      batch.delete(doc(db, NOTIFICATIONS_COL, d.id));
+      const data = d.data() as AppNotification;
+      const matchRecipient = !userId || !data.recipientId || data.recipientId === userId;
+      const matchRole = !role || !data.recipientRole || data.recipientRole === 'all' || data.recipientRole === role;
+      if (matchRecipient || matchRole) {
+        batch.delete(doc(db, NOTIFICATIONS_COL, d.id));
+        count++;
+      }
     });
-    await batch.commit();
+    if (count > 0) {
+      await batch.commit();
+    }
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, NOTIFICATIONS_COL);
+    console.warn('clearAllNotifications notice:', error);
   }
 }
 
@@ -521,11 +530,11 @@ export async function updateEnrollmentStatus(
 ): Promise<void> {
   try {
     const docRef = doc(db, ENROLLMENTS_COL, enrollmentId);
-    await updateDoc(docRef, { 
+    await setDoc(docRef, { 
       status, 
       reviewedAt: new Date().toISOString(),
       ...(reviewerName ? { reviewedBy: reviewerName } : {})
-    });
+    }, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `${ENROLLMENTS_COL}/${enrollmentId}`);
   }
@@ -584,10 +593,10 @@ export async function ensureAdminAccount(adminEmail = 'tanjosell.lpt@gmail.com')
         found = true;
         // Fix account to be Admin and Approved
         if (data.role !== 'admin' || data.status !== 'approved') {
-          await updateDoc(doc(db, USERS_COL, d.id), {
+          await setDoc(doc(db, USERS_COL, d.id), {
             role: 'admin',
             status: 'approved',
-          });
+          }, { merge: true });
         }
       }
     }

@@ -411,15 +411,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }): Promise<{ success: boolean; message?: string; user?: UserAccount }> => {
     const email = params.email.toLowerCase().trim();
     const isAdminEmail = email === ADMIN_EMAIL;
-
-    // Check if email already exists in system
-    const existingEmailUser = usersList.find((u) => u.email && u.email.toLowerCase() === email);
-    if (existingEmailUser) {
-      return {
-        success: false,
-        message: 'This email address is already registered to another account. Please sign in or use a different email.',
-      };
-    }
     const displayName = `${params.firstName.trim()} ${params.middleName ? params.middleName.trim() + ' ' : ''}${params.lastName.trim()}`;
 
     const rawCode = (params.classCode || '').trim().toUpperCase();

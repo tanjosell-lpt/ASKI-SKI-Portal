@@ -10,9 +10,10 @@ import {
   Check, 
   ChevronDown, 
   Sparkles,
-  School
+  School,
+  Trash2
 } from 'lucide-react';
-import { markNotificationAsRead } from '../services/dbService';
+import { markNotificationAsRead, clearAllNotifications } from '../services/dbService';
 
 interface HeaderProps {
   notifications: AppNotification[];
@@ -84,11 +85,28 @@ export const Header: React.FC<HeaderProps> = ({ notifications }) => {
                         Notifications ({userNotifications.length})
                       </h4>
                     </div>
-                    {unreadCount > 0 && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
-                        {unreadCount} new
-                      </span>
-                    )}
+
+                    <div className="flex items-center gap-2">
+                      {unreadCount > 0 && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                          {unreadCount} new
+                        </span>
+                      )}
+                      {userNotifications.length > 0 && (
+                        <button
+                          onClick={async () => {
+                            if (window.confirm('Clear all notifications?')) {
+                              await clearAllNotifications(currentUser?.id, role || undefined);
+                            }
+                          }}
+                          className="apple-tap text-[10px] font-bold text-slate-500 hover:text-rose-600 flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-rose-50 transition"
+                          title="Clear all notifications"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Clear All</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="max-h-64 overflow-y-auto space-y-2">

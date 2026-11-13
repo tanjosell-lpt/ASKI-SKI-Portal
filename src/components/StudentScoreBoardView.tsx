@@ -2,6 +2,7 @@ import React, { useRef, useState, useMemo } from 'react';
 import { StudentScoreBoard, ClassSubject, calculateScoreBoardTotals } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { AskiLogo } from './AskiLogo';
+import { ConfirmModal } from './ConfirmModal';
 import { 
   Printer, 
   Clock, 
@@ -47,6 +48,13 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
   const [joinStatus, setJoinStatus] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
   const [joinLoading, setJoinLoading] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
   // Filter student-specific scoreboards strictly for THIS student only
   const myScoreBoards = useMemo(() => {
@@ -271,16 +279,19 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
     setJoinLoading(false);
   };
 
-  const handleUnenroll = async (classCode: string, subjectName: string) => {
-    if (window.confirm(`Are you sure you want to unenroll from ${subjectName} (${classCode})?`)) {
-      const res = await unenrollSubject(classCode);
-      if (res.success) {
-        if (selectedClassCode === classCode) {
+  const handleUnenroll = (classCode: string, subjectName: string) => {
+    setConfirmDialog({
+      title: 'Drop Subject',
+      message: `Are you sure you want to unenroll from ${subjectName} (${classCode})?`,
+      confirmLabel: 'Drop Subject',
+      onConfirm: async () => {
+        const res = await unenrollSubject(classCode);
+        if (res.success && selectedClassCode === classCode) {
           const remaining = enrolledSubjects.filter((s) => s.classCode !== classCode);
           setSelectedClassCode(remaining[0]?.classCode || '');
         }
-      }
-    }
+      },
+    });
   };
 
   const handleCopyClassCode = (code: string) => {
@@ -503,10 +514,15 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
                 </div>
 
                 <button
-                  onClick={async () => {
-                    if (window.confirm(`Withdraw enrollment request for ${enr.subjectName} (${enr.classCode})?`)) {
-                      await unenrollSubject(enr.classCode);
-                    }
+                  onClick={() => {
+                    setConfirmDialog({
+                      title: 'Withdraw Enrollment Request',
+                      message: `Withdraw enrollment request for ${enr.subjectName} (${enr.classCode})?`,
+                      confirmLabel: 'Withdraw',
+                      onConfirm: async () => {
+                        await unenrollSubject(enr.classCode);
+                      },
+                    });
                   }}
                   className="apple-tap text-[10px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-2.5 py-1 rounded-xl transition shrink-0"
                   title="Cancel Request"
@@ -953,6 +969,26 @@ export const StudentScoreBoardView: React.FC<StudentScoreBoardViewProps> = ({
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={!!confirmDialog}
+        title={confirmDialog?.title || ''}
+        message={confirmDialog?.message || ''}
+        confirmLabel={confirmDialog?.confirmLabel || 'Confirm'}
+        variant="danger"
+        loading={confirmLoading}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={async () => {
+          if (!confirmDialog) return;
+          setConfirmLoading(true);
+          try {
+            await confirmDialog.onConfirm();
+          } finally {
+            setConfirmLoading(false);
+            setConfirmDialog(null);
+          }
+        }}
+      />
     </div>
   );
 };

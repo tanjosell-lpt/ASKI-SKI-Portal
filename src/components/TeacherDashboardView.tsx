@@ -10,6 +10,7 @@ import {
 } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { AskiLogo } from './AskiLogo';
+import { ConfirmModal } from './ConfirmModal';
 import { 
   Plus, 
   FileSpreadsheet, 
@@ -31,7 +32,8 @@ import {
   ChevronDown,
   Clock,
   Sliders,
-  Calendar
+  Calendar,
+  ArrowUpDown
 } from 'lucide-react';
 import { 
   saveClassSubject, 
@@ -54,6 +56,16 @@ interface TeacherDashboardViewProps {
   onOpenUploadModal: (classCode: string, subjectName: string, scope?: UploadScope) => void;
 }
 
+type DirectorySortOption = 'first-asc' | 'first-desc' | 'last-asc' | 'last-desc' | 'newest';
+
+const getLastNameKey = (fullName: string, explicitLastName?: string): string => {
+  if (explicitLastName && explicitLastName.trim()) {
+    return explicitLastName.trim().toLowerCase();
+  }
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  return (parts.length > 1 ? parts[parts.length - 1] : parts[0] || '').toLowerCase();
+};
+
 export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   classes,
   scoreboards,
@@ -70,6 +82,7 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   } = useAuth();
   const [selectedClassCode, setSelectedClassCode] = useState<string>(classes[0]?.classCode || 'SKI-10A');
   const [searchQuery, setSearchQuery] = useState('');
+  const [rosterSort, setRosterSort] = useState<DirectorySortOption>('first-asc');
   const [actionStatus, setActionStatus] = useState<string | null>(null);
 
   // Modals state
@@ -78,6 +91,14 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
   const [editingScoreBoard, setEditingScoreBoard] = useState<StudentScoreBoard | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [isTaskCustomizerOpen, setIsTaskCustomizerOpen] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    variant?: 'danger' | 'primary' | 'warning';
+    onConfirm: () => Promise<void>;
+  } | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
   const photoFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -140,15 +161,20 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     );
   }, [enrollmentsList, teacherClassCodes]);
 
-  // Filter scoreboards for the selected class code
+  // Filter & sort scoreboards for the selected class code
   const classScoreboards = useMemo(() => {
     if (!selectedClassCode) return [];
-    return scoreboards.filter((sb) => {
+    const findMatchedUser = (sb: StudentScoreBoard) =>
+      usersList.find(
+        (u) =>
+          u.id === sb.studentId ||
+          (u.email && sb.studentEmail && u.email.toLowerCase() === sb.studentEmail.toLowerCase())
+      );
+
+    const filtered = scoreboards.filter((sb) => {
       const matchCode = sb.classCode.toUpperCase() === selectedClassCode.toUpperCase();
       // Ensure pending or rejected users don't show on official roster
-      const user = usersList.find(
-        (u) => u.id === sb.studentId || (u.email && sb.studentEmail && u.email.toLowerCase() === sb.studentEmail.toLowerCase())
-      );
+      const user = findMatchedUser(sb);
       if (user && user.status === 'pending') return false;
 
       const q = searchQuery.toLowerCase().trim();
@@ -159,7 +185,25 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
         (sb.lrn && sb.lrn.includes(q));
       return matchCode && matchSearch;
     });
-  }, [scoreboards, selectedClassCode, searchQuery, usersList]);
+
+    return [...filtered].sort((a, b) => {
+      const ua = findMatchedUser(a);
+      const ub = findMatchedUser(b);
+      if (rosterSort === 'newest') {
+        const ta = new Date(ua?.createdAt || a.updatedAt || 0).getTime();
+        const tb = new Date(ub?.createdAt || b.updatedAt || 0).getTime();
+        return tb - ta;
+      }
+      if (rosterSort === 'last-asc' || rosterSort === 'last-desc') {
+        const la = getLastNameKey(a.studentName || '', ua?.lastName);
+        const lb = getLastNameKey(b.studentName || '', ub?.lastName);
+        const cmp = la.localeCompare(lb) || (a.studentName || '').localeCompare(b.studentName || '');
+        return rosterSort === 'last-asc' ? cmp : -cmp;
+      }
+      const cmp = (a.studentName || '').trim().localeCompare((b.studentName || '').trim());
+      return rosterSort === 'first-asc' ? cmp : -cmp;
+    });
+  }, [scoreboards, selectedClassCode, searchQuery, usersList, rosterSort]);
 
   // Task counts for current class
   const currentWWList = classScoreboards[0]?.writtenWorks || [
@@ -179,12 +223,18 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
-  const handleDeleteScoreBoard = async (id: string, name: string) => {
-    if (window.confirm(`Are you sure you want to delete the score record for ${name}?`)) {
-      await deleteScoreBoard(id);
-      setActionStatus(`Deleted record for ${name}`);
-      setTimeout(() => setActionStatus(null), 2500);
-    }
+  const handleDeleteScoreBoard = (id: string, name: string) => {
+    setConfirmDialog({
+      title: 'Delete Score Record',
+      message: `Are you sure you want to delete the score record for ${name}?`,
+      confirmLabel: 'Delete Record',
+      variant: 'danger',
+      onConfirm: async () => {
+        await deleteScoreBoard(id);
+        setActionStatus(`Deleted record for ${name}`);
+        setTimeout(() => setActionStatus(null), 2500);
+      },
+    });
   };
 
   // --- Teacher Student Registration Approval Handlers ---
@@ -204,22 +254,34 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     setTimeout(() => setActionStatus(null), 3000);
   };
 
-  const handleTeacherRejectStudent = async (student: UserAccount) => {
-    if (window.confirm(`Reject registration request for ${student.displayName}?`)) {
-      await updateUserStatus(student.id, 'rejected');
-      setActionStatus(`Registration for ${student.displayName} rejected`);
-      setTimeout(() => setActionStatus(null), 3000);
-    }
+  const handleTeacherRejectStudent = (student: UserAccount) => {
+    setConfirmDialog({
+      title: 'Reject Registration Request',
+      message: `Reject registration request for ${student.displayName}?`,
+      confirmLabel: 'Reject',
+      variant: 'danger',
+      onConfirm: async () => {
+        await updateUserStatus(student.id, 'rejected');
+        setActionStatus(`Registration for ${student.displayName} rejected`);
+        setTimeout(() => setActionStatus(null), 3000);
+      },
+    });
   };
 
-  const handleTeacherApproveAllStudents = async () => {
-    if (window.confirm(`Approve all ${pendingStudentsForTeacher.length} pending student registrations?`)) {
-      for (const student of pendingStudentsForTeacher) {
-        await updateUserStatus(student.id, 'approved');
-      }
-      setActionStatus(`Approved all ${pendingStudentsForTeacher.length} students`);
-      setTimeout(() => setActionStatus(null), 3000);
-    }
+  const handleTeacherApproveAllStudents = () => {
+    setConfirmDialog({
+      title: 'Approve All Pending Students',
+      message: `Approve all ${pendingStudentsForTeacher.length} pending student registrations?`,
+      confirmLabel: 'Approve All',
+      variant: 'primary',
+      onConfirm: async () => {
+        for (const student of pendingStudentsForTeacher) {
+          await updateUserStatus(student.id, 'approved');
+        }
+        setActionStatus(`Approved all ${pendingStudentsForTeacher.length} students`);
+        setTimeout(() => setActionStatus(null), 3000);
+      },
+    });
   };
 
   // --- Teacher Subject Enrollment Approval Handlers ---
@@ -229,33 +291,47 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     setTimeout(() => setActionStatus(null), 3000);
   };
 
-  const handleTeacherRejectEnrollment = async (enrollment: SubjectEnrollment) => {
-    if (window.confirm(`Reject subject enrollment for ${enrollment.studentName} in ${enrollment.subjectName} (${enrollment.classCode})?`)) {
-      await rejectSubjectEnrollment(enrollment.id, currentUser?.displayName || 'Faculty Teacher');
-      setActionStatus(`Rejected enrollment for ${enrollment.studentName}`);
-      setTimeout(() => setActionStatus(null), 3000);
-    }
+  const handleTeacherRejectEnrollment = (enrollment: SubjectEnrollment) => {
+    setConfirmDialog({
+      title: 'Reject Enrollment Request',
+      message: `Reject subject enrollment for ${enrollment.studentName} in ${enrollment.subjectName} (${enrollment.classCode})?`,
+      confirmLabel: 'Reject',
+      variant: 'danger',
+      onConfirm: async () => {
+        await rejectSubjectEnrollment(enrollment.id, currentUser?.displayName || 'Faculty Teacher');
+        setActionStatus(`Rejected enrollment for ${enrollment.studentName}`);
+        setTimeout(() => setActionStatus(null), 3000);
+      },
+    });
   };
 
-  const handleTeacherApproveAllEnrollments = async () => {
-    if (window.confirm(`Approve all ${pendingEnrollmentsForTeacher.length} subject enrollment requests?`)) {
-      for (const enr of pendingEnrollmentsForTeacher) {
-        await approveSubjectEnrollment(enr, currentUser?.displayName || 'Faculty Teacher');
-      }
-      setActionStatus(`Approved all ${pendingEnrollmentsForTeacher.length} subject enrollments`);
-      setTimeout(() => setActionStatus(null), 3000);
-    }
+  const handleTeacherApproveAllEnrollments = () => {
+    setConfirmDialog({
+      title: 'Approve All Enrollment Requests',
+      message: `Approve all ${pendingEnrollmentsForTeacher.length} subject enrollment requests?`,
+      confirmLabel: 'Approve All',
+      variant: 'primary',
+      onConfirm: async () => {
+        for (const enr of pendingEnrollmentsForTeacher) {
+          await approveSubjectEnrollment(enr, currentUser?.displayName || 'Faculty Teacher');
+        }
+        setActionStatus(`Approved all ${pendingEnrollmentsForTeacher.length} subject enrollments`);
+        setTimeout(() => setActionStatus(null), 3000);
+      },
+    });
   };
 
   // --- Dynamic Task Customization for Class ---
   const handleAddClassWrittenWork = async () => {
     if (classScoreboards.length === 0) {
-      alert('Please enroll or upload students first before adding tasks.');
+      setActionStatus('Please enroll or upload students first before adding tasks.');
+      setTimeout(() => setActionStatus(null), 3000);
       return;
     }
     const nextIdx = (classScoreboards[0].writtenWorks?.length || 0) + 1;
     if (nextIdx > 5) {
-      alert('Maximum 5 Written Works allowed by ASKI-SKI assessment framework.');
+      setActionStatus('Maximum 5 Written Works allowed by ASKI-SKI assessment framework.');
+      setTimeout(() => setActionStatus(null), 3000);
       return;
     }
 
@@ -277,36 +353,43 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     setTimeout(() => setActionStatus(null), 3000);
   };
 
-  const handleDeleteClassWrittenWork = async (itemIdx: number) => {
+  const handleDeleteClassWrittenWork = (itemIdx: number) => {
     if ((classScoreboards[0]?.writtenWorks?.length || 0) <= 2) {
-      alert('Minimum 2 Written Works required by ASKI-SKI framework.');
-      return;
-    }
-    if (!window.confirm(`Delete Written Work ${itemIdx + 1} from all learners in ${selectedClassCode}?`)) {
+      setActionStatus('Minimum 2 Written Works required by ASKI-SKI framework.');
+      setTimeout(() => setActionStatus(null), 3000);
       return;
     }
 
-    const updated = classScoreboards.map((sb) => {
-      const clone: StudentScoreBoard = JSON.parse(JSON.stringify(sb));
-      if (clone.writtenWorks) {
-        clone.writtenWorks = clone.writtenWorks.filter((_, i) => i !== itemIdx);
-        clone.writtenWorks.forEach((item, i) => {
-          item.id = `ww-${i + 1}`;
-          item.title = `Written/Oral Work ${i + 1}`;
+    setConfirmDialog({
+      title: 'Delete Written Work Column',
+      message: `Delete Written Work ${itemIdx + 1} from all learners in ${selectedClassCode}?`,
+      confirmLabel: 'Delete Task',
+      variant: 'danger',
+      onConfirm: async () => {
+        const updated = classScoreboards.map((sb) => {
+          const clone: StudentScoreBoard = JSON.parse(JSON.stringify(sb));
+          if (clone.writtenWorks) {
+            clone.writtenWorks = clone.writtenWorks.filter((_, i) => i !== itemIdx);
+            clone.writtenWorks.forEach((item, i) => {
+              item.id = `ww-${i + 1}`;
+              item.title = `Written/Oral Work ${i + 1}`;
+            });
+          }
+          clone.updatedAt = new Date().toISOString();
+          return clone;
         });
-      }
-      clone.updatedAt = new Date().toISOString();
-      return clone;
-    });
 
-    await saveBatchScoreBoards(updated);
-    setActionStatus(`Removed Written Work item`);
-    setTimeout(() => setActionStatus(null), 3000);
+        await saveBatchScoreBoards(updated);
+        setActionStatus(`Removed Written Work item`);
+        setTimeout(() => setActionStatus(null), 3000);
+      },
+    });
   };
 
   const handleAddClassPerformanceTask = async () => {
     if (classScoreboards.length === 0) {
-      alert('Please enroll or upload students first before adding tasks.');
+      setActionStatus('Please enroll or upload students first before adding tasks.');
+      setTimeout(() => setActionStatus(null), 3000);
       return;
     }
     const nextIdx = (classScoreboards[0].performanceTasks?.length || 0) + 1;
@@ -329,31 +412,37 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
     setTimeout(() => setActionStatus(null), 3000);
   };
 
-  const handleDeleteClassPerformanceTask = async (itemIdx: number) => {
+  const handleDeleteClassPerformanceTask = (itemIdx: number) => {
     if ((classScoreboards[0]?.performanceTasks?.length || 0) <= 1) {
-      alert('At least 1 Performance Task required.');
-      return;
-    }
-    if (!window.confirm(`Delete Performance Task ${itemIdx + 1} from all learners in ${selectedClassCode}?`)) {
+      setActionStatus('At least 1 Performance Task required.');
+      setTimeout(() => setActionStatus(null), 3000);
       return;
     }
 
-    const updated = classScoreboards.map((sb) => {
-      const clone: StudentScoreBoard = JSON.parse(JSON.stringify(sb));
-      if (clone.performanceTasks) {
-        clone.performanceTasks = clone.performanceTasks.filter((_, i) => i !== itemIdx);
-        clone.performanceTasks.forEach((item, i) => {
-          item.id = `pt-${i + 1}`;
-          item.title = `Product/Performance Task ${i + 1}`;
+    setConfirmDialog({
+      title: 'Delete Performance Task Column',
+      message: `Delete Performance Task ${itemIdx + 1} from all learners in ${selectedClassCode}?`,
+      confirmLabel: 'Delete Task',
+      variant: 'danger',
+      onConfirm: async () => {
+        const updated = classScoreboards.map((sb) => {
+          const clone: StudentScoreBoard = JSON.parse(JSON.stringify(sb));
+          if (clone.performanceTasks) {
+            clone.performanceTasks = clone.performanceTasks.filter((_, i) => i !== itemIdx);
+            clone.performanceTasks.forEach((item, i) => {
+              item.id = `pt-${i + 1}`;
+              item.title = `Product/Performance Task ${i + 1}`;
+            });
+          }
+          clone.updatedAt = new Date().toISOString();
+          return clone;
         });
-      }
-      clone.updatedAt = new Date().toISOString();
-      return clone;
-    });
 
-    await saveBatchScoreBoards(updated);
-    setActionStatus(`Removed Performance Task`);
-    setTimeout(() => setActionStatus(null), 3000);
+        await saveBatchScoreBoards(updated);
+        setActionStatus(`Removed Performance Task`);
+        setTimeout(() => setActionStatus(null), 3000);
+      },
+    });
   };
 
   return (
@@ -722,6 +811,22 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <select
+                aria-label="Sort learner directory"
+                value={rosterSort}
+                onChange={(e) => setRosterSort(e.target.value as DirectorySortOption)}
+                className="pl-8 pr-7 py-1.5 rounded-xl text-xs font-medium bg-slate-50 border border-slate-200 text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#007AFF] cursor-pointer"
+              >
+                <option value="first-asc">Sort: Name (A → Z)</option>
+                <option value="first-desc">Sort: Name (Z → A)</option>
+                <option value="last-asc">Sort: Last Name (A → Z)</option>
+                <option value="last-desc">Sort: Last Name (Z → A)</option>
+                <option value="newest">Sort: Newest Registered</option>
+              </select>
+            </div>
+
             <div className="relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -1129,6 +1234,26 @@ export const TeacherDashboardView: React.FC<TeacherDashboardViewProps> = ({
           }}
         />
       )}
+
+      <ConfirmModal
+        isOpen={!!confirmDialog}
+        title={confirmDialog?.title || ''}
+        message={confirmDialog?.message || ''}
+        confirmLabel={confirmDialog?.confirmLabel || 'Confirm'}
+        variant={confirmDialog?.variant || 'danger'}
+        loading={confirmLoading}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={async () => {
+          if (!confirmDialog) return;
+          setConfirmLoading(true);
+          try {
+            await confirmDialog.onConfirm();
+          } finally {
+            setConfirmLoading(false);
+            setConfirmDialog(null);
+          }
+        }}
+      />
     </div>
   );
 };

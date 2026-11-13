@@ -106,6 +106,24 @@ export async function deleteUserAccount(userId: string): Promise<void> {
   }
 }
 
+export async function findUserByEmail(email: string): Promise<UserAccount | null> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return null;
+  try {
+    const snap = await getDocs(collection(db, USERS_COL));
+    for (const d of snap.docs) {
+      const data = { id: d.id, ...d.data() } as UserAccount;
+      if (data.email && data.email.trim().toLowerCase() === normalized) {
+        return data;
+      }
+    }
+    return null;
+  } catch (error) {
+    console.warn('findUserByEmail fallback:', error);
+    return null;
+  }
+}
+
 /**
  * Permanently deletes a student learner and unenrolls them from all subjects and removes their scoreboards.
  */

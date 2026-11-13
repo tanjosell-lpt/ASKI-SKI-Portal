@@ -86,6 +86,8 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
     classCode?: string;
     email: string;
     photo?: string;
+    alreadyRegistered?: boolean;
+    role?: UserRole;
   } | null>(null);
   const [teacherSuccessMsg, setTeacherSuccessMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -213,6 +215,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
         classCode: res.user.classCode,
         email: res.user.email,
         photo: res.user.avatar,
+        alreadyRegistered: false,
+        role: res.user.role,
+      });
+    } else if (res.alreadyExists && res.existingStatus === 'pending' && res.user) {
+      setPendingSuccessData({
+        name: res.user.displayName,
+        lrn: res.user.lrn,
+        classCode: res.user.classCode,
+        email: res.user.email,
+        photo: res.user.avatar,
+        alreadyRegistered: true,
+        role: res.user.role,
       });
     } else {
       setErrorMsg(res.message || 'Registration failed. Please check your inputs.');
@@ -265,6 +279,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
         setActiveTab('signin');
         setSignInIdentifier(res.user?.email || '');
       }, 3000);
+    } else if (res.alreadyExists && res.existingStatus === 'pending' && res.user) {
+      setPendingSuccessData({
+        name: res.user.displayName,
+        email: res.user.email,
+        photo: res.user.avatar,
+        alreadyRegistered: true,
+        role: res.user.role,
+      });
     } else {
       setErrorMsg(res.message || 'Teacher registration failed.');
     }
@@ -275,6 +297,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
     setSelectedRole(role);
     setErrorMsg(null);
     setTeacherSuccessMsg(null);
+    setPendingSuccessData(null);
     setActiveTab('signin');
     // Ensure inputs are completely empty so users input their own credentials
     setAdminUsername('');
@@ -438,18 +461,30 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
             </div>
 
             <div>
-              <span className="text-[10px] font-bold tracking-wider uppercase px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
-                Sign Up Submitted • Pending Admin Approval
+              <span className="text-[10px] font-bold tracking-wider uppercase px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 inline-flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                {pendingSuccessData.alreadyRegistered
+                  ? 'Already Registered • Waiting for Approval'
+                  : 'Sign Up Submitted • Waiting for Admin Approval'}
               </span>
               <h2 className="text-xl font-bold text-[#0b3b60] mt-3">
-                Welcome, {pendingSuccessData.name}!
+                {pendingSuccessData.alreadyRegistered
+                  ? `Waiting for Approval, ${pendingSuccessData.name}`
+                  : `Welcome, ${pendingSuccessData.name}!`}
               </h2>
               <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                Your student account has been forwarded to ASKI-SKI administration for verification. Once approved, you can enroll in multiple subjects using the codes provided by your teachers.
+                {pendingSuccessData.alreadyRegistered
+                  ? 'This email address has already been used for registration. Only one registration per email is allowed — your account is currently waiting for Administrator approval.'
+                  : 'Your registration has been forwarded to ASKI-SKI administration for verification. Once approved, you can sign in and access your portal.'}
               </p>
             </div>
 
             <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-left text-xs space-y-1.5">
+              {pendingSuccessData.role && (
+                <div className="text-slate-600">
+                  Portal Role: <span className="text-[#0b3b60] font-bold capitalize">{pendingSuccessData.role === 'teacher' ? 'Faculty Teacher' : pendingSuccessData.role}</span>
+                </div>
+              )}
               {pendingSuccessData.lrn && (
                 <div className="text-slate-600">
                   LRN: <span className="text-[#0b3b60] font-mono font-bold">{pendingSuccessData.lrn}</span>
@@ -459,15 +494,17 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ classes }) => {
                 Registered Email: <span className="text-slate-800 font-mono font-semibold">{pendingSuccessData.email}</span>
               </div>
               <div className="text-slate-600">
-                Status: <span className="text-amber-600 font-bold">Pending Administrator Approval</span>
+                Status: <span className="text-amber-600 font-bold">Waiting for Administrator Approval</span>
               </div>
             </div>
 
             <div className="pt-2">
               <button
                 onClick={() => {
+                  const emailToFill = pendingSuccessData.email;
                   setPendingSuccessData(null);
                   setActiveTab('signin');
+                  setSignInIdentifier(emailToFill);
                 }}
                 className="w-full py-2.5 rounded-xl bg-[#0b3b60] hover:bg-[#092c4c] text-white font-bold text-xs shadow-md transition"
               >

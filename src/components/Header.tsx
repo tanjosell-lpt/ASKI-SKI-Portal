@@ -14,6 +14,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { markNotificationAsRead, clearAllNotifications } from '../services/dbService';
+import { ConfirmModal } from './ConfirmModal';
 
 interface HeaderProps {
   notifications: AppNotification[];
@@ -22,6 +23,8 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ notifications }) => {
   const { currentUser, role, logout } = useAuth();
   const [showNotifMenu, setShowNotifMenu] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearingNotifs, setClearingNotifs] = useState(false);
 
   // Filter relevant notifications
   const userNotifications = notifications.filter((n) => {
@@ -94,11 +97,7 @@ export const Header: React.FC<HeaderProps> = ({ notifications }) => {
                       )}
                       {userNotifications.length > 0 && (
                         <button
-                          onClick={async () => {
-                            if (window.confirm('Clear all notifications?')) {
-                              await clearAllNotifications(currentUser?.id, role || undefined);
-                            }
-                          }}
+                          onClick={() => setShowClearConfirm(true)}
                           className="apple-tap text-[10px] font-bold text-slate-500 hover:text-rose-600 flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-rose-50 transition"
                           title="Clear all notifications"
                         >
@@ -187,6 +186,30 @@ export const Header: React.FC<HeaderProps> = ({ notifications }) => {
           </div>
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={showClearConfirm}
+        title="Clear All Notifications"
+        message="Are you sure you want to clear all notifications from your inbox?"
+        confirmLabel="Clear All"
+        variant="danger"
+        loading={clearingNotifs}
+        onCancel={() => setShowClearConfirm(false)}
+        onConfirm={async () => {
+          setClearingNotifs(true);
+          try {
+            window.dispatchEvent(
+              new CustomEvent('clear-local-notifications', {
+                detail: { userId: currentUser?.id, role },
+              })
+            );
+            await clearAllNotifications(currentUser?.id, role || undefined);
+          } finally {
+            setClearingNotifs(false);
+            setShowClearConfirm(false);
+          }
+        }}
+      />
     </header>
   );
 };

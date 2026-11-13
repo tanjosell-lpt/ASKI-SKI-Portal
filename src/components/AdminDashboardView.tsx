@@ -11,6 +11,7 @@ import {
 } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { AskiLogo } from './AskiLogo';
+import { ConfirmModal } from './ConfirmModal';
 import { 
   ShieldCheck, 
   Clock, 
@@ -29,7 +30,9 @@ import {
   Plus,
   RefreshCw,
   Sparkles,
-  Sliders
+  Sliders,
+  ArrowUpDown,
+  AlertCircle
 } from 'lucide-react';
 import { 
   saveUserAccount,
@@ -48,6 +51,63 @@ interface AdminDashboardViewProps {
   scoreboards: StudentScoreBoard[];
 }
 
+type DirectorySortOption = 'first-asc' | 'first-desc' | 'last-asc' | 'last-desc' | 'newest';
+
+const getLastNameKey = (fullName: string, explicitLastName?: string): string => {
+  if (explicitLastName && explicitLastName.trim()) {
+    return explicitLastName.trim().toLowerCase();
+  }
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  return (parts.length > 1 ? parts[parts.length - 1] : parts[0] || '').toLowerCase();
+};
+
+const sortUsersDirectory = (list: UserAccount[], sortOption: DirectorySortOption): UserAccount[] => {
+  return [...list].sort((a, b) => {
+    if (sortOption === 'newest') {
+      return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+    }
+    if (sortOption === 'last-asc' || sortOption === 'last-desc') {
+      const la = getLastNameKey(a.displayName || '', a.lastName);
+      const lb = getLastNameKey(b.displayName || '', b.lastName);
+      const cmp = la.localeCompare(lb) || (a.displayName || '').localeCompare(b.displayName || '');
+      return sortOption === 'last-asc' ? cmp : -cmp;
+    }
+    const cmp = (a.displayName || '').trim().localeCompare((b.displayName || '').trim());
+    return sortOption === 'first-asc' ? cmp : -cmp;
+  });
+};
+
+const sortScoreboardsDirectory = (
+  list: StudentScoreBoard[],
+  sortOption: DirectorySortOption,
+  usersList: UserAccount[]
+): StudentScoreBoard[] => {
+  const findUser = (sb: StudentScoreBoard) =>
+    usersList.find(
+      (u) =>
+        u.id === sb.studentId ||
+        (u.email && sb.studentEmail && u.email.toLowerCase() === sb.studentEmail.toLowerCase())
+    );
+
+  return [...list].sort((a, b) => {
+    const ua = findUser(a);
+    const ub = findUser(b);
+    if (sortOption === 'newest') {
+      const ta = new Date(ua?.createdAt || a.updatedAt || 0).getTime();
+      const tb = new Date(ub?.createdAt || b.updatedAt || 0).getTime();
+      return tb - ta;
+    }
+    if (sortOption === 'last-asc' || sortOption === 'last-desc') {
+      const la = getLastNameKey(a.studentName || '', ua?.lastName);
+      const lb = getLastNameKey(b.studentName || '', ub?.lastName);
+      const cmp = la.localeCompare(lb) || (a.studentName || '').localeCompare(b.studentName || '');
+      return sortOption === 'last-asc' ? cmp : -cmp;
+    }
+    const cmp = (a.studentName || '').trim().localeCompare((b.studentName || '').trim());
+    return sortOption === 'first-asc' ? cmp : -cmp;
+  });
+};
+
 export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   users,
   classes,
@@ -63,7 +123,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   } = useAuth();
   const [activeTab, setActiveTab] = useState<'pending' | 'students' | 'teachers' | 'classes' | 'scoreboards'>('pending');
   const [searchQuery, setSearchQuery] = useState('');
+  const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
+  const [studentSort, setStudentSort] = useState<DirectorySortOption>('first-asc');
+  const [teacherSort, setTeacherSort] = useState<DirectorySortOption>('first-asc');
+  const [scoreboardSort, setScoreboardSort] = useState<DirectorySortOption>('first-asc');
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    variant?: 'danger' | 'primary' | 'warning';
+    onConfirm: () => Promise<void>;
+  } | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
 
   // Edit Modals
   const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
@@ -91,8 +163,49 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   }, [enrollmentsList]);
 
   const teacherUsers = useMemo(() => {
-    return users.filter((u) => u.role === 'teacher');
-  }, [users]);
+    return sortUsersDirectory(
+      users.filter((u) => u.role === 'teacher'),
+      teacherSort
+    );
+  }, [users, teacherSort]);
+
+  const filteredTeachers = useMemo(() => {
+    const q = teacherSearchQuery.toLowerCase().trim();
+    if (!q) return teacherUsers;
+    return teacherUsers.filter(
+      (t) =>
+        t.displayName.toLowerCase().includes(q) ||
+        t.email.toLowerCase().includes(q)
+    );
+  }, [teacherUsers, teacherSearchQuery]);
+
+  const sortedStudents = useMemo(() => {
+    const filtered = users
+      .filter((u) => u.role === 'student')
+      .filter((u) => {
+        if (!searchQuery.trim()) return true;
+        const q = searchQuery.toLowerCase();
+        return (
+          u.displayName.toLowerCase().includes(q) ||
+          (u.lrn && u.lrn.includes(q)) ||
+          u.email.toLowerCase().includes(q)
+        );
+      });
+    return sortUsersDirectory(filtered, studentSort);
+  }, [users, searchQuery, studentSort]);
+
+  const sortedScoreboards = useMemo(() => {
+    const filtered = scoreboards.filter((sb) => {
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      return (
+        sb.studentName.toLowerCase().includes(q) ||
+        sb.classCode.toLowerCase().includes(q) ||
+        sb.subjectName.toLowerCase().includes(q)
+      );
+    });
+    return sortScoreboardsDirectory(filtered, scoreboardSort, users);
+  }, [scoreboards, searchQuery, scoreboardSort, users]);
 
   const handleApprove = async (user: UserAccount) => {
     await updateUserStatus(user.id, 'approved');
@@ -118,51 +231,81 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     setTimeout(() => setActionSuccess(null), 3000);
   };
 
-  const handleRejectEnrollment = async (enrollmentId: string, studentName: string) => {
-    if (window.confirm(`Reject enrollment request for ${studentName}?`)) {
-      await rejectSubjectEnrollment(enrollmentId, 'Administrator');
-      setActionSuccess(`Rejected enrollment request for ${studentName}`);
-      setTimeout(() => setActionSuccess(null), 3000);
-    }
+  const handleRejectEnrollment = (enrollmentId: string, studentName: string) => {
+    setConfirmDialog({
+      title: 'Reject Enrollment Request',
+      message: `Reject enrollment request for ${studentName}?`,
+      confirmLabel: 'Reject Request',
+      variant: 'danger',
+      onConfirm: async () => {
+        await rejectSubjectEnrollment(enrollmentId, 'Administrator');
+        setActionSuccess(`Rejected enrollment request for ${studentName}`);
+        setTimeout(() => setActionSuccess(null), 3000);
+      },
+    });
   };
 
-  const handleApproveAll = async () => {
-    if (window.confirm(`Approve all ${pendingUsers.length} pending account registrations?`)) {
-      for (const u of pendingUsers) {
-        await updateUserStatus(u.id, 'approved');
-      }
-      setActionSuccess(`All ${pendingUsers.length} registrations approved`);
-      setTimeout(() => setActionSuccess(null), 3000);
-    }
+  const handleApproveAll = () => {
+    setConfirmDialog({
+      title: 'Approve All Pending Accounts',
+      message: `Approve all ${pendingUsers.length} pending account registrations?`,
+      confirmLabel: 'Approve All',
+      variant: 'primary',
+      onConfirm: async () => {
+        for (const u of pendingUsers) {
+          await updateUserStatus(u.id, 'approved');
+        }
+        setActionSuccess(`All ${pendingUsers.length} registrations approved`);
+        setTimeout(() => setActionSuccess(null), 3000);
+      },
+    });
   };
 
-  const handleReject = async (user: UserAccount) => {
-    if (window.confirm(`Reject registration request for ${user.displayName}?`)) {
-      await updateUserStatus(user.id, 'rejected');
-      setActionSuccess(`Registration for ${user.displayName} rejected`);
-      setTimeout(() => setActionSuccess(null), 3000);
-    }
+  const handleReject = (user: UserAccount) => {
+    setConfirmDialog({
+      title: 'Reject Registration',
+      message: `Reject registration request for ${user.displayName}?`,
+      confirmLabel: 'Reject',
+      variant: 'danger',
+      onConfirm: async () => {
+        await updateUserStatus(user.id, 'rejected');
+        setActionSuccess(`Registration for ${user.displayName} rejected`);
+        setTimeout(() => setActionSuccess(null), 3000);
+      },
+    });
   };
 
-  const handleDeleteUser = async (user: UserAccount) => {
+  const handleDeleteUser = (user: UserAccount) => {
     const isTeacher = user.role === 'teacher';
     const confirmMsg = isTeacher
       ? `Permanently remove faculty member ${user.displayName}? All assigned subjects will be deleted, enrolled students will be automatically unenrolled from those subjects, and the faculty member will lose portal access immediately.`
       : `Permanently delete learner account for ${user.displayName}? The student will be unenrolled from all subjects and their score records removed.`;
 
-    if (window.confirm(confirmMsg)) {
-      await deleteUser(user.id);
-      setActionSuccess(`${isTeacher ? 'Faculty member' : 'Learner'} ${user.displayName} removed and unenrolled`);
-      setTimeout(() => setActionSuccess(null), 3500);
-    }
+    setConfirmDialog({
+      title: isTeacher ? 'Remove Faculty Member' : 'Delete Learner Account',
+      message: confirmMsg,
+      confirmLabel: isTeacher ? 'Remove Faculty' : 'Delete Learner',
+      variant: 'danger',
+      onConfirm: async () => {
+        await deleteUser(user.id);
+        setActionSuccess(`${isTeacher ? 'Faculty member' : 'Learner'} ${user.displayName} removed and unenrolled`);
+        setTimeout(() => setActionSuccess(null), 3500);
+      },
+    });
   };
 
-  const handleDeleteClass = async (cls: ClassSubject) => {
-    if (window.confirm(`Delete class ${cls.subjectName} (${cls.classCode})? All enrolled students will be unenrolled and score records removed.`)) {
-      await deleteClassSubject(cls.id, cls.classCode);
-      setActionSuccess(`Class ${cls.classCode} deleted and learners unenrolled`);
-      setTimeout(() => setActionSuccess(null), 3000);
-    }
+  const handleDeleteClass = (cls: ClassSubject) => {
+    setConfirmDialog({
+      title: 'Delete Class Section',
+      message: `Delete class ${cls.subjectName} (${cls.classCode})? All enrolled students will be unenrolled and score records removed.`,
+      confirmLabel: 'Delete Class',
+      variant: 'danger',
+      onConfirm: async () => {
+        await deleteClassSubject(cls.id, cls.classCode);
+        setActionSuccess(`Class ${cls.classCode} deleted and learners unenrolled`);
+        setTimeout(() => setActionSuccess(null), 3000);
+      },
+    });
   };
 
   return (
@@ -579,18 +722,36 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         <div className="apple-glass rounded-3xl p-6 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <h3 className="font-bold text-sm text-slate-900">
-              Learners Directory
+              Learners Directory ({sortedStudents.length})
             </h3>
 
-            <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 pr-3 py-1.5 rounded-xl text-xs bg-white/80 border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#007AFF]"
-              />
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <select
+                  aria-label="Sort learners directory"
+                  value={studentSort}
+                  onChange={(e) => setStudentSort(e.target.value as DirectorySortOption)}
+                  className="pl-8 pr-7 py-1.5 rounded-xl text-xs font-medium bg-white/80 border border-slate-200 text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#007AFF] cursor-pointer"
+                >
+                  <option value="first-asc">Sort: Name (A → Z)</option>
+                  <option value="first-desc">Sort: Name (Z → A)</option>
+                  <option value="last-asc">Sort: Last Name (A → Z)</option>
+                  <option value="last-desc">Sort: Last Name (Z → A)</option>
+                  <option value="newest">Sort: Newest Registered</option>
+                </select>
+              </div>
+
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9 pr-3 py-1.5 rounded-xl text-xs bg-white/80 border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#007AFF]"
+                />
+              </div>
             </div>
           </div>
 
@@ -607,14 +768,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white/50">
-                {users
-                  .filter((u) => u.role === 'student')
-                  .filter((u) => {
-                    if (!searchQuery.trim()) return true;
-                    const q = searchQuery.toLowerCase();
-                    return u.displayName.toLowerCase().includes(q) || (u.lrn && u.lrn.includes(q)) || u.email.toLowerCase().includes(q);
-                  })
-                  .map((st) => (
+                {sortedStudents.map((st) => (
                     <tr key={st.id} className="hover:bg-white/80 transition">
                       <td className="px-4 py-3 font-semibold text-slate-900">
                         <div className="flex items-center gap-2.5">
@@ -670,22 +824,51 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       {/* TAB 3: FACULTY & TEACHERS */}
       {activeTab === 'teachers' && (
         <div className="apple-glass rounded-3xl p-6 space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <h3 className="font-bold text-sm text-slate-900">
-              Faculty Members
+              Faculty Members ({filteredTeachers.length})
             </h3>
 
-            <button
-              onClick={() => setIsAddTeacherOpen(true)}
-              className="apple-tap inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-[#007AFF] hover:bg-blue-600 text-white font-semibold text-xs shadow-md transition"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>Add Teacher</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <select
+                  aria-label="Sort faculty directory"
+                  value={teacherSort}
+                  onChange={(e) => setTeacherSort(e.target.value as DirectorySortOption)}
+                  className="pl-8 pr-7 py-1.5 rounded-xl text-xs font-medium bg-white/80 border border-slate-200 text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#007AFF] cursor-pointer"
+                >
+                  <option value="first-asc">Sort: Name (A → Z)</option>
+                  <option value="first-desc">Sort: Name (Z → A)</option>
+                  <option value="last-asc">Sort: Last Name (A → Z)</option>
+                  <option value="last-desc">Sort: Last Name (Z → A)</option>
+                  <option value="newest">Sort: Newest Registered</option>
+                </select>
+              </div>
+
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search faculty..."
+                  value={teacherSearchQuery}
+                  onChange={(e) => setTeacherSearchQuery(e.target.value)}
+                  className="pl-9 pr-3 py-1.5 rounded-xl text-xs bg-white/80 border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#007AFF]"
+                />
+              </div>
+
+              <button
+                onClick={() => setIsAddTeacherOpen(true)}
+                className="apple-tap inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-[#007AFF] hover:bg-blue-600 text-white font-semibold text-xs shadow-md transition"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>Add Teacher</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {teacherUsers.map((teacher) => (
+            {filteredTeachers.map((teacher) => (
               <div 
                 key={teacher.id}
                 className="p-4 rounded-2xl bg-white/70 border border-slate-200/60 flex items-center justify-between gap-3 shadow-xs"
@@ -792,18 +975,36 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         <div className="apple-glass rounded-3xl p-6 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <h3 className="font-bold text-sm text-slate-900">
-              Score Board Editor
+              Score Board Editor ({sortedScoreboards.length})
             </h3>
 
-            <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 pr-3 py-1.5 rounded-xl text-xs bg-white/80 border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#007AFF]"
-              />
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <select
+                  aria-label="Sort scoreboard directory"
+                  value={scoreboardSort}
+                  onChange={(e) => setScoreboardSort(e.target.value as DirectorySortOption)}
+                  className="pl-8 pr-7 py-1.5 rounded-xl text-xs font-medium bg-white/80 border border-slate-200 text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#007AFF] cursor-pointer"
+                >
+                  <option value="first-asc">Sort: Name (A → Z)</option>
+                  <option value="first-desc">Sort: Name (Z → A)</option>
+                  <option value="last-asc">Sort: Last Name (A → Z)</option>
+                  <option value="last-desc">Sort: Last Name (Z → A)</option>
+                  <option value="newest">Sort: Newest Registered</option>
+                </select>
+              </div>
+
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9 pr-3 py-1.5 rounded-xl text-xs bg-white/80 border border-slate-200 text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#007AFF]"
+                />
+              </div>
             </div>
           </div>
 
@@ -821,13 +1022,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white/50">
-                {scoreboards
-                  .filter((sb) => {
-                    if (!searchQuery.trim()) return true;
-                    const q = searchQuery.toLowerCase();
-                    return sb.studentName.toLowerCase().includes(q) || sb.classCode.toLowerCase().includes(q) || sb.subjectName.toLowerCase().includes(q);
-                  })
-                  .map((sb) => {
+                {sortedScoreboards.map((sb) => {
                     const totals = calculateScoreBoardTotals(sb);
                     return (
                       <tr key={sb.id} className="hover:bg-white/80 transition">
@@ -858,14 +1053,21 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                               Edit Scores
                             </button>
                             <button
-                              onClick={async () => {
-                                if (window.confirm(`Delete scoreboard for ${sb.studentName}?`)) {
-                                  await deleteScoreBoard(sb.id);
-                                  setActionSuccess(`Deleted scoreboard for ${sb.studentName}`);
-                                  setTimeout(() => setActionSuccess(null), 2500);
-                                }
+                              onClick={() => {
+                                setConfirmDialog({
+                                  title: 'Delete Scoreboard Record',
+                                  message: `Permanently delete the scoreboard for ${sb.studentName} (${sb.classCode})?`,
+                                  confirmLabel: 'Delete Scoreboard',
+                                  variant: 'danger',
+                                  onConfirm: async () => {
+                                    await deleteScoreBoard(sb.id);
+                                    setActionSuccess(`Deleted scoreboard for ${sb.studentName}`);
+                                    setTimeout(() => setActionSuccess(null), 2500);
+                                  },
+                                });
                               }}
                               className="apple-tap p-1.5 text-slate-400 hover:text-rose-600 transition"
+                              title="Delete Scoreboard"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -933,8 +1135,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             if (res.success && res.user) {
               setActionSuccess(`Added teacher ${res.user.displayName}`);
               setTimeout(() => setActionSuccess(null), 3000);
+              setIsAddTeacherOpen(false);
             }
-            setIsAddTeacherOpen(false);
+            return { success: res.success, message: res.message };
           }}
         />
       )}
@@ -952,6 +1155,26 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           }}
         />
       )}
+
+      <ConfirmModal
+        isOpen={!!confirmDialog}
+        title={confirmDialog?.title || ''}
+        message={confirmDialog?.message || ''}
+        confirmLabel={confirmDialog?.confirmLabel || 'Confirm'}
+        variant={confirmDialog?.variant || 'danger'}
+        loading={confirmLoading}
+        onCancel={() => setConfirmDialog(null)}
+        onConfirm={async () => {
+          if (!confirmDialog) return;
+          setConfirmLoading(true);
+          try {
+            await confirmDialog.onConfirm();
+          } finally {
+            setConfirmLoading(false);
+            setConfirmDialog(null);
+          }
+        }}
+      />
     </div>
   );
 };
@@ -1586,13 +1809,14 @@ const AdminEditClassModal: React.FC<{
 
 const AddTeacherModal: React.FC<{
   onClose: () => void;
-  onSave: (data: { name: string; email: string; password?: string; avatar?: string }) => Promise<void>;
+  onSave: (data: { name: string; email: string; password?: string; avatar?: string }) => Promise<{ success: boolean; message?: string }>;
 }> = ({ onClose, onSave }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('teacher123');
   const [photo, setPhoto] = useState<string>('');
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1610,14 +1834,18 @@ const AddTeacherModal: React.FC<{
     e.preventDefault();
     if (!name.trim() || !email.trim()) return;
 
+    setErrorMsg(null);
     setLoading(true);
-    await onSave({
+    const res = await onSave({
       name: name.trim(),
       email: email.trim(),
       password,
       avatar: photo || undefined,
     });
     setLoading(false);
+    if (!res.success) {
+      setErrorMsg(res.message || 'This email address is already registered.');
+    }
   };
 
   return (
@@ -1633,6 +1861,12 @@ const AddTeacherModal: React.FC<{
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
+          {errorMsg && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
           <div className="flex items-center gap-3.5 p-3 rounded-2xl bg-slate-100/70 border border-slate-200">
             <div className="relative w-12 h-12 rounded-full overflow-hidden border border-slate-200 bg-white shrink-0 flex items-center justify-center">
               {photo ? (

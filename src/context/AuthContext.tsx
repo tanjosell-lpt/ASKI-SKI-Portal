@@ -13,7 +13,10 @@ import {
   subscribeToEnrollments,
   saveSubjectEnrollment,
   updateEnrollmentStatus,
-  deleteSubjectEnrollment
+  deleteSubjectEnrollment,
+  findUserByEmail,
+  deleteStudentCascading,
+  deleteTeacherCascading
 } from '../services/dbService';
 
 interface AuthContextType {
@@ -33,13 +36,13 @@ interface AuthContextType {
     email: string;
     password?: string;
     classCode?: string;
-  }) => Promise<{ success: boolean; message?: string; user?: UserAccount }>;
+  }) => Promise<{ success: boolean; message?: string; user?: UserAccount; alreadyExists?: boolean; existingStatus?: ApprovalStatus }>;
   signUpTeacher: (params: {
     name: string;
     email: string;
     password?: string;
     avatar?: string;
-  }) => Promise<{ success: boolean; message?: string; user?: UserAccount }>;
+  }) => Promise<{ success: boolean; message?: string; user?: UserAccount; alreadyExists?: boolean; existingStatus?: ApprovalStatus }>;
   requestPasswordReset: (identifier: string) => Promise<{ success: boolean; message: string; otpCode?: string }>;
   verifyOtpAndResetPassword: (identifier: string, otpCode: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
   enrollInSubject: (classCode: string, availableClasses: ClassSubject[]) => Promise<{ success: boolean; message: string; subject?: ClassSubject }>;
@@ -408,9 +411,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     email: string;
     password?: string;
     classCode?: string;
-  }): Promise<{ success: boolean; message?: string; user?: UserAccount }> => {
+  }): Promise<{ success: boolean; message?: string; user?: UserAccount; alreadyExists?: boolean; existingStatus?: ApprovalStatus }> => {
     const email = params.email.toLowerCase().trim();
     const isAdminEmail = email === ADMIN_EMAIL;
+
+    // One email registration only: check local cache and Firestore
+    if (!isAdminEmail) {
+      const existingLocal = usersList.find((u) => u.email?.toLowerCase().trim() === email);
+      const existingRemote = existingLocal || (await findUserByEmail(email));
+      if (existingRemote) {
+        if (existingRemote.status === 'pending') {
+          return {
+            success: false,
+            alreadyExists: true,
+            existingStatus: 'pending',
+            user: existingRemote,
+            message: `This email (${email}) is already registered and is currently waiting for Administrator approval.`,
+          };
+        }
+        if (existingRemote.status === 'approved') {
+          return {
+            success: false,
+            alreadyExists: true,
+            existingStatus: 'approved',
+            user: existingRemote,
+            message: `This email (${email}) is already registered and approved. Please sign in instead.`,
+          };
+        }
+        return {
+          success: false,
+          alreadyExists: true,
+          existingStatus: existingRemote.status,
+          user: existingRemote,
+          message: `This email (${email}) has already been used for registration (status: ${existingRemote.status}). Only one registration per email is allowed.`,
+        };
+      }
+    }
+
     const displayName = `${params.firstName.trim()} ${params.middleName ? params.middleName.trim() + ' ' : ''}${params.lastName.trim()}`;
 
     const rawCode = (params.classCode || '').trim().toUpperCase();
@@ -720,7 +757,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const updatedUser: UserAccount = {
       ...currentUser,
-      classCode: nextEnrolled[0] || undefined,
+      classCode: nextEnrolled[0] || '',
       enrolledClassCodes: nextEnrolled,
     };
 
@@ -743,7 +780,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     email: string;
     password?: string;
     avatar?: string;
-  }): Promise<{ success: boolean; message?: string; user?: UserAccount }> => {
+  }): Promise<{ success: boolean; message?: string; user?: UserAccount; alreadyExists?: boolean; existingStatus?: ApprovalStatus }> => {
+    const email = params.email.toLowerCase().trim();
+
+    // One email registration only: check local cache and Firestore
+    const existingLocal = usersList.find((u) => u.email?.toLowerCase().trim() === email);
+    const existingRemote = existingLocal || (await findUserByEmail(email));
+    if (existingRemote) {
+      if (existingRemote.status === 'pending') {
+        return {
+          success: false,
+          alreadyExists: true,
+          existingStatus: 'pending',
+          user: existingRemote,
+          message: `This email (${email}) is already registered and is currently waiting for Administrator approval.`,
+        };
+      }
+      if (existingRemote.status === 'approved') {
+        return {
+          success: false,
+          alreadyExists: true,
+          existingStatus: 'approved',
+          user: existingRemote,
+          message: `This email (${email}) is already registered and approved. Please sign in instead.`,
+        };
+      }
+      return {
+        success: false,
+        alreadyExists: true,
+        existingStatus: existingRemote.status,
+        user: existingRemote,
+        message: `This email (${email}) has already been used for registration (status: ${existingRemote.status}). Only one registration per email is allowed.`,
+      };
+    }
+
     const nameParts = params.name.trim().split(' ');
     const firstName = nameParts[0] || 'Teacher';
     const lastName = nameParts.slice(1).join(' ') || 'Faculty';
@@ -753,7 +823,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       firstName,
       lastName,
       displayName: params.name.trim(),
-      email: params.email.toLowerCase().trim(),
+      email,
       password: params.password || 'teacher123',
       role: 'teacher',
       status: 'pending', // Teacher registrations require Admin approval
@@ -817,11 +887,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const deleteUser = async (userId: string) => {
+    const target = usersList.find((u) => u.id === userId);
     setUsersList((prev) => prev.filter((u) => u.id !== userId));
     if (currentUser && currentUser.id === userId) {
       setCurrentUser(null);
     }
-    await deleteUserAccount(userId);
+    if (target?.role === 'teacher') {
+      await deleteTeacherCascading(target.id, target.displayName, target.email);
+    } else if (target?.role === 'student') {
+      await deleteStudentCascading(target.id, target.email);
+    } else {
+      await deleteUserAccount(userId);
+    }
   };
 
   const ensureAdminRestored = async () => {
